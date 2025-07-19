@@ -1,5 +1,5 @@
 {
-  "name": "react-flow-dagre-poc",
+  "name": "intersense-protoype",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,8 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^1.1.5",
-    "@xyflow/react": "^12.8.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",

@@ -1,0 +1,1020 @@
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import OpenAIRealtimePOC from './OpenAIRealtimePOC';
+
+// Helper: Parse script into columns
+function parseScript(text) {
+	try {
+		const parsed = JSON.parse(text);
+		if (Array.isArray(parsed)) return parsed;
+	} catch {}
+	const lines = text.split('\n');
+	const stages = [];
+	let currentStage = null;
+	lines.forEach((line) => {
+		const trimmed = line.trim();
+		if (!trimmed) return;
+		if (trimmed.startsWith('Stage')) {
+			if (currentStage) stages.push(currentStage);
+			currentStage = { label: trimmed.replace(/^Stage\s*\d*:\s*/, ''), questions: [] };
+		} else if (trimmed.startsWith('-')) {
+			if (currentStage) currentStage.questions.push(trimmed.replace(/^-/, '').trim());
+		}
+	});
+	if (currentStage) stages.push(currentStage);
+	return stages;
+}
+
+function getQuestionBg(isCurrent, similarity) {
+	if (!isCurrent) return undefined;
+	const opacity = Math.pow(similarity, 2);
+	const r = 255;
+	const g = 255;
+	const b = Math.round(255 * (1 - opacity));
+	return `rgba(${r},${g},${b},1)`;
+}
+
+const TAG_WORDS = [
+	'Insight', 'Follow-up', 'Key', 'Emotion', 'Action', 'Theme', 'Note', 'Highlight', 'Flag', 'Idea'
+];
+
+function getRandomWord() {
+	return TAG_WORDS[Math.floor(Math.random() * TAG_WORDS.length)];
+}
+
+function getRandomSummary() {
+	return Array.from({ length: 3 })
+		.map(() => TAG_WORDS[Math.floor(Math.random() * TAG_WORDS.length)])
+		.join(', ');
+}
+
+function getRandomFollowup() {
+	const followups = [
+		"Can you elaborate on that?",
+		"Why do you think that is?",
+		"How did that make you feel?",
+		"What happened next?",
+		"Can you give an example?",
+		"What would you do differently?",
+		"How important is that to you?",
+		"What led you to that decision?",
+		"How often does this occur?",
+		"What else comes to mind?"
+	];
+	return followups[Math.floor(Math.random() * followups.length)];
+}
+
+// const defaultScript = `Stage 1: Decision to Open Netflix
+// - On an average day, why do you open up Netflix?
+// - Tell us about the times of day you watch?
+// - Who is with you when you are watching Netflix?
+// - What [other things] are you doing when you are watching?
+// - Tell us about your mood when you are watching?
+//
+// Stage 2: Content Discovery
+// - Once you have Netflix open, how do you choose what to watch?
+// - Describe your strategies to find recommended content. What do you usually end up watching?
+// - How do you get recommendations? How often are these from friends/family or other sources? How often from Netflix?
+// - Which of these recommendations are most valuable to you?
+// - What does it feel like to find something not recommended vs. something recommended?
+// - How do you feel about recommendation engines supporting you in discovering new content?
+//
+// Stage 3: Content Consumption
+// - Can you describe a time when Netflix started playing the next episode/movie automatically?
+// - How long do you tend to watch Netflix content at a time?
+// - If you are watching a TV show, do you tend to watch one or more than one episode at a time?
+// - What are your thoughts on how Netflix releases episodes—weekly or whole seasons at once?
+// - If you finish a movie, do you tend to watch another one? What do you do when you see the recommendation starting to be played automatically?
+// `;
+const defaultScript = ``;
+
+function App() {
+	// ...existing state...
+	const [scriptText, setScriptText] = useState(defaultScript);
+	const [stages, setStages] = useState(parseScript(defaultScript));
+	const [current, setCurrent] = useState({ stageIdx: null, qIdx: null });
+	// // TODO: setting this to 0.5 for now. might night to dynamically set it later based on requirements
+	// const [similarity, setSimilarity] = useState(1);
+	const [similarity, setSimilarity] = useState(0.5);
+	const [visited, setVisited] = useState([]); // Only declare ONCE
+	const [tags, setTags] = useState({});
+	const [summaries, setSummaries] = useState({});
+	const [showOverview, setShowOverview] = useState({});
+	const [finished, setFinished] = useState(false);
+	const [lastCompletedStageIdx, setLastCompletedStageIdx] = useState(null);
+	// Per-question follow-ups ("?" button)
+	const [followups, setFollowups] = useState({});
+	// Per-stage follow-up at end (green dotted)
+	const [stageFollowups, setStageFollowups] = useState({}); // { [stageIdx]: string|null }
+
+	const maxQuestions = Math.max(...stages.map(s => s.questions.length));
+
+	// ...all your existing handlers...
+
+	function handleLoadScript(e) {
+		e.preventDefault();
+		const parsed = parseScript(scriptText);
+		if (parsed.length === 0) {
+			alert('No stages/questions found. Please check your format.');
+			return;
+		}
+		setStages(parsed);
+		setCurrent({ stageIdx: null, qIdx: null });
+		setVisited([]);
+		setTags({});
+		setSummaries({});
+		setShowOverview({});
+		setFinished(false);
+		setLastCompletedStageIdx(null);
+		setFollowups({});
+		setStageFollowups({});
+	}
+
+	function handleSimilarityChange(e) {
+		let val = parseFloat(e.target.value);
+		if (isNaN(val)) val = 1;
+		val = Math.max(0, Math.min(1, val));
+		setSimilarity(val);
+	}
+
+	function isVisited(stageIdx, qIdx) {
+		return visited.some(v => v.stageIdx === stageIdx && v.qIdx === qIdx);
+	}
+
+	function getStageStatus(idx) {
+		if (current.stageIdx === idx) return 'current';
+		if (idx < current.stageIdx) return 'past';
+		return 'future';
+	}
+
+	function handleQuestionClick(stageIdx, qIdx) {
+		if (!stages[stageIdx]?.questions[qIdx]) return;
+		if (getStageStatus(stageIdx) === 'past' || finished) return;
+		setCurrent({ stageIdx, qIdx });
+		setVisited((prev) => {
+			if (prev.some((v) => v.stageIdx === stageIdx && v.qIdx === qIdx)) return prev;
+			return [...prev, { stageIdx, qIdx }];
+		});
+		setLastCompletedStageIdx(stageIdx);
+	}
+
+	function handleAddQuestion(stageIdx) {
+		if (getStageStatus(stageIdx) === 'past' || finished) return;
+		setStages((prevStages) => {
+			const newStages = prevStages.map((stage, idx) => {
+				if (idx !== stageIdx) return stage;
+				return {
+					...stage,
+					questions: [
+						...stage.questions,
+						`Random question ${stage.questions.length + 1} (dev)`
+					]
+				};
+			});
+			return newStages;
+		});
+	}
+
+	function handleDeleteQuestion(stageIdx, qIdx) {
+		if (getStageStatus(stageIdx) === 'past' || finished) return;
+		setStages((prevStages) => {
+			const newStages = prevStages.map((stage, idx) => {
+				if (idx !== stageIdx) return stage;
+				return {
+					...stage,
+					questions: stage.questions.filter((_, i) => i !== qIdx)
+				};
+			});
+			return newStages;
+		});
+		setVisited((prev) =>
+			prev.filter((v) => !(v.stageIdx === stageIdx && v.qIdx === qIdx))
+		);
+		if (current.stageIdx === stageIdx && current.qIdx === qIdx) {
+			setCurrent({ stageIdx: null, qIdx: null });
+		}
+		setTags((prevTags) => {
+			const newTags = { ...prevTags };
+			delete newTags[`${stageIdx}_${qIdx}`];
+			return newTags;
+		});
+		setFollowups((prev) => {
+			const newF = { ...prev };
+			delete newF[`${stageIdx}_${qIdx}`];
+			return newF;
+		});
+	}
+
+	function handleMark() {
+		if (current.stageIdx === null || current.qIdx === null) return;
+		if (getStageStatus(current.stageIdx) === 'past' || finished) return;
+		const key = `${current.stageIdx}_${current.qIdx}`;
+		setTags((prev) => ({
+			...prev,
+			[key]: { word: getRandomWord(), dropdownOpen: false }
+		}));
+	}
+
+	function handleCurrentOverview() {
+		if (current.stageIdx === null) return;
+		setSummaries((prev) => ({
+			...prev,
+			[current.stageIdx]: getRandomSummary()
+		}));
+		setShowOverview((prev) => ({
+			...prev,
+			[current.stageIdx]: true
+		}));
+	}
+
+	React.useEffect(() => {
+		if (current.stageIdx !== null && current.stageIdx > 0) {
+			const prevIdx = current.stageIdx - 1;
+			if (!summaries[prevIdx]) {
+				setSummaries((prev) => ({
+					...prev,
+					[prevIdx]: getRandomSummary()
+				}));
+				setShowOverview((prev) => ({
+					...prev,
+					[prevIdx]: true
+				}));
+			}
+		}
+	}, [current.stageIdx]); // eslint-disable-line
+
+	function handleFinish() {
+		const lastIdx = stages.length - 1;
+		if (!summaries[lastIdx]) {
+			setSummaries((prev) => ({
+				...prev,
+				[lastIdx]: getRandomSummary()
+			}));
+		}
+		setShowOverview((prev) => ({
+			...prev,
+			[lastIdx]: true
+		}));
+		setFinished(true);
+		setCurrent({ stageIdx: null, qIdx: null });
+		setLastCompletedStageIdx(stages.length - 1);
+	}
+
+	function TagShape({ word, onClick }) {
+		return (
+			<div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
+				<svg
+					width={110}
+					height={40}
+					style={{ cursor: 'pointer', display: 'block' }}
+					onClick={onClick}
+				>
+					<polygon
+						points="0,0 90,0 110,20 90,40 0,40"
+						fill="#1976d2"
+						stroke="#1250a3"
+						strokeWidth="2"
+					/>
+					<text
+						x="55"
+						y="25"
+						textAnchor="middle"
+						fill="#fff"
+						fontSize="16"
+						fontWeight="bold"
+						style={{ pointerEvents: 'none', userSelect: 'none' }}
+					>
+						{word}
+					</text>
+				</svg>
+			</div>
+		);
+	}
+
+	function TagDropdown({ onSelect, onClose }) {
+		return (
+			<div
+				style={{
+					position: 'absolute',
+					background: '#fff',
+					border: '1px solid #1976d2',
+					borderRadius: 6,
+					boxShadow: '0 2px 8px #0002',
+					zIndex: 100,
+					marginTop: 4,
+					left: '50%',
+					transform: 'translateX(-50%)',
+					minWidth: 100,
+				}}
+			>
+				{TAG_WORDS.map((word) => (
+					<div
+						key={word}
+						onClick={() => { onSelect(word); onClose(); }}
+						style={{
+							padding: '8px 16px',
+							cursor: 'pointer',
+							color: '#1976d2',
+							fontWeight: 'bold',
+							borderBottom: '1px solid #e0e0e0',
+							background: '#f5faff',
+							transition: 'background 0.2s',
+						}}
+						onMouseDown={e => e.preventDefault()}
+						onMouseOver={e => e.currentTarget.style.background = '#e3f0ff'}
+						onMouseOut={e => e.currentTarget.style.background = '#f5faff'}
+					>
+						{word}
+					</div>
+				))}
+			</div>
+		);
+	}
+
+	function toggleTagDropdown(stageIdx, qIdx) {
+		const key = `${stageIdx}_${qIdx}`;
+		setTags((prev) => {
+			const newTags = { ...prev };
+			Object.keys(newTags).forEach(k => {
+				if (k === key) {
+					newTags[k] = { ...newTags[k], dropdownOpen: !newTags[k].dropdownOpen };
+				} else {
+					newTags[k] = { ...newTags[k], dropdownOpen: false };
+				}
+			});
+			return newTags;
+		});
+	}
+
+	function setTagWord(stageIdx, qIdx, word) {
+		const key = `${stageIdx}_${qIdx}`;
+		setTags((prev) => ({
+			...prev,
+			[key]: { word, dropdownOpen: false }
+		}));
+	}
+
+	function closeAllTagDropdowns() {
+		setTags((prev) => {
+			const newTags = { ...prev };
+			Object.keys(newTags).forEach(k => {
+				newTags[k] = { ...newTags[k], dropdownOpen: false };
+			});
+			return newTags;
+		});
+	}
+
+	function toggleOverview(idx) {
+		setShowOverview((prev) => ({
+			...prev,
+			[idx]: !prev[idx]
+		}));
+	}
+
+	// --- Per-question follow-up logic ---
+	function handleAddFollowup(stageIdx, qIdx) {
+		const key = `${stageIdx}_${qIdx}`;
+		setFollowups(prev => ({
+			...prev,
+			[key]: getRandomFollowup()
+		}));
+	}
+
+	function handlePromoteFollowup(stageIdx, qIdx) {
+		const key = `${stageIdx}_${qIdx}`;
+		setStages(prevStages => {
+			const newStages = prevStages.map((stage, idx) => {
+				if (idx !== stageIdx) return stage;
+				const questions = [...stage.questions];
+				questions.splice(qIdx + 1, 0, followups[key]);
+				return { ...stage, questions };
+			});
+			return newStages;
+		});
+
+		// Shift tags
+		setTags(prev => {
+			const next = { ...prev };
+			const keys = Object.keys(next);
+			for (let i = keys.length - 1; i >= 0; i--) {
+				const k = keys[i];
+				const [s, q] = k.split('_').map(Number);
+				if (s === stageIdx && q > qIdx) {
+					next[`${s}_${q + 1}`] = next[k];
+					delete next[k];
+				}
+			}
+			return next;
+		});
+
+		// Shift visited
+		setVisited(prev =>
+			prev.map(v =>
+				v.stageIdx === stageIdx && v.qIdx > qIdx
+					? { ...v, qIdx: v.qIdx + 1 }
+					: v
+			)
+		);
+
+		// Shift followups
+		setFollowups(prev => {
+			const next = { ...prev };
+			const keys = Object.keys(next);
+			for (let i = keys.length - 1; i >= 0; i--) {
+				const k = keys[i];
+				const [s, q] = k.split('_').map(Number);
+				if (s === stageIdx && q > qIdx) {
+					next[`${s}_${q + 1}`] = next[k];
+					delete next[k];
+				}
+			}
+			// Remove the promoted followup
+			delete next[key];
+			return next;
+		});
+
+		// Set the new question as current
+		setCurrent({ stageIdx, qIdx: qIdx + 1 });
+		setVisited(prev => [...prev, { stageIdx, qIdx: qIdx + 1 }]);
+		setLastCompletedStageIdx(stageIdx);
+	}
+
+	// --- Per-stage follow-up logic ---
+	function handleAddStageFollowup() {
+		if (current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished) return;
+		const sIdx = current.stageIdx;
+		if (stageFollowups[sIdx]) return; // Only one at a time
+		setStageFollowups(prev => ({
+			...prev,
+			[sIdx]: getRandomFollowup()
+		}));
+	}
+
+	function handlePromoteStageFollowup(stageIdx) {
+		setStages(prevStages => {
+			const newStages = prevStages.map((stage, idx) => {
+				if (idx !== stageIdx) return stage;
+				const questions = [...stage.questions, stageFollowups[stageIdx]];
+				return { ...stage, questions };
+			});
+			return newStages;
+		});
+		// Set the new question as current
+		setCurrent({ stageIdx, qIdx: stages[stageIdx].questions.length });
+		setVisited(prev => [...prev, { stageIdx, qIdx: stages[stageIdx].questions.length }]);
+		setLastCompletedStageIdx(stageIdx);
+		setStageFollowups(prev => {
+			const next = { ...prev };
+			delete next[stageIdx];
+			return next;
+		});
+	}
+
+	// Get current stage's questions as a script string
+	const currentStageQuestions = current.stageIdx !== null && stages[current.stageIdx]?.questions
+		? stages[current.stageIdx].questions
+		: [];
+	const scriptForAPI = currentStageQuestions.map(q => `- ${q}`).join('\n');
+
+	// Track detected question from POC
+	const [detectedQuestion, setDetectedQuestion] = useState('');
+
+	// When detectedQuestion changes, update current.qIdx if it matches a question in the current stage
+	React.useEffect(() => {
+		if (current.stageIdx !== null && detectedQuestion) {
+			const idx = currentStageQuestions.findIndex(q => q.trim() === detectedQuestion.trim());
+			if (idx !== -1 && idx !== current.qIdx) {
+				setCurrent(c => ({ ...c, qIdx: idx }));
+				// Add to visited if not already
+				setVisited(prev => {
+					if (prev.some(v => v.stageIdx === current.stageIdx && v.qIdx === idx)) return prev;
+					return [...prev, { stageIdx: current.stageIdx, qIdx: idx }];
+				});
+			}
+		}
+		// eslint-disable-next-line
+	}, [detectedQuestion, current.stageIdx]);
+
+	function isVisited(stageIdx, qIdx) {
+		return visited.some(v => v.stageIdx === stageIdx && v.qIdx === qIdx);
+	}
+
+	// Stage navigation logic
+	function canSwitchToStage(idx) {
+		if (finished) return false;
+		if (idx === 0) return true;
+		// Allow switching to next stage if at least one question in the current stage is visited
+		if (current.stageIdx !== null && idx === current.stageIdx + 1) {
+			const hasVisited = visited.some(v => v.stageIdx === current.stageIdx);
+			return hasVisited;
+		}
+		// Prevent going back to previous stages
+		if (idx < current.stageIdx) return false;
+		return false;
+	}
+
+	function handleStageSwitch(idx) {
+		if (canSwitchToStage(idx)) {
+			setCurrent({ stageIdx: idx, qIdx: null });
+			setDetectedQuestion('');
+		}
+	}
+
+	return (
+		<div style={{ padding: 32, background: '#f8f8f8', minHeight: '100vh' }}>
+			{/* Show the POC only when a stage is selected; use key to force remount on stage change */}
+			{current.stageIdx !== null && (
+				<div style={{ marginBottom: 32 }}>
+					<OpenAIRealtimePOC key={current.stageIdx} script={scriptForAPI} onDetectedQuestion={setDetectedQuestion} autoStart />
+				</div>
+			)}
+			<form
+				onSubmit={handleLoadScript}
+				style={{
+					marginBottom: 32,
+					background: '#fff',
+					padding: 20,
+					borderRadius: 8,
+					boxShadow: '0 2px 8px #0002',
+					minWidth: 340,
+				}}
+			>
+				<div style={{ fontWeight: 'bold', marginBottom: 10 }}>Paste Interview Script</div>
+				<textarea
+					value={scriptText}
+					onChange={(e) => setScriptText(e.target.value)}
+					rows={12}
+					style={{
+						width: '100%',
+						marginBottom: 10,
+						padding: 8,
+						borderRadius: 4,
+						border: '1px solid #ccc',
+						fontFamily: 'monospace',
+						fontSize: 14,
+						resize: 'vertical',
+					}}
+				/>
+				<button
+					type="submit"
+					style={{
+						background: '#1976d2',
+						color: '#fff',
+						border: 'none',
+						borderRadius: 4,
+						padding: '8px 16px',
+						fontWeight: 'bold',
+						cursor: 'pointer',
+					}}
+				>
+					Load Script
+				</button>
+			</form>
+			<div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+				<label style={{ fontSize: 15, marginRight: 8 }}>
+					Similarity (0-1, for highlight intensity): 
+				</label>
+				<input
+					type="number"
+					min={0}
+					max={1}
+					step={0.01}
+					value={similarity}
+					onChange={handleSimilarityChange}
+					style={{ width: 60, fontSize: 15, marginRight: 8 }}
+				/>
+				<span style={{ fontSize: 13, color: '#888' }}>
+					(Set to demo different highlight intensities)
+				</span>
+				<button
+					type="button"
+					onClick={handleMark}
+					disabled={current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished}
+					style={{
+						marginLeft: 32,
+						background: '#1976d2',
+						color: '#fff',
+						border: 'none',
+						borderRadius: 4,
+						padding: '8px 18px',
+						fontWeight: 'bold',
+						fontSize: 16,
+						cursor: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 'not-allowed' : 'pointer',
+						opacity: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 0.5 : 1,
+						boxShadow: '0 1px 4px #0001',
+					}}
+				>
+					Mark
+				</button>
+				<button
+					type="button"
+					onClick={handleCurrentOverview}
+					disabled={current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished}
+					style={{
+						background: '#ff9800',
+						color: '#fff',
+						border: 'none',
+						borderRadius: 4,
+						padding: '8px 18px',
+						fontWeight: 'bold',
+						fontSize: 16,
+						cursor: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished ? 'not-allowed' : 'pointer',
+						opacity: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished ? 0.5 : 1,
+						boxShadow: '0 1px 4px #0001',
+					}}
+				>
+					Overview
+				</button>
+				<button
+					type="button"
+					onClick={handleAddStageFollowup}
+					disabled={current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx]}
+					style={{
+						background: '#2e7d32',
+						color: '#fff',
+						border: 'none',
+						borderRadius: 4,
+						padding: '8px 18px',
+						fontWeight: 'bold',
+						fontSize: 16,
+						cursor: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx] ? 'not-allowed' : 'pointer',
+						opacity: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx] ? 0.5 : 1,
+						boxShadow: '0 1px 4px #0001',
+					}}
+				>
+					Follow Up
+				</button>
+				<button
+					type="button"
+					onClick={handleFinish}
+					disabled={
+						current.stageIdx !== stages.length - 1 ||
+							finished
+					}
+					style={{
+						background: '#388e3c',
+						color: '#fff',
+						border: 'none',
+						borderRadius: 4,
+						padding: '8px 18px',
+						fontWeight: 'bold',
+						fontSize: 16,
+						marginLeft: 32,
+						cursor:
+						current.stageIdx !== stages.length - 1 || finished
+							? 'not-allowed'
+							: 'pointer',
+						opacity:
+						current.stageIdx !== stages.length - 1 || finished
+							? 0.5
+							: 1,
+						boxShadow: '0 1px 4px #0001',
+					}}
+				>
+					Finish
+				</button>
+			</div>
+			<div
+				style={{
+					display: 'grid',
+					gridTemplateColumns: `repeat(${stages.length}, 1fr)`,
+					gap: 24,
+					background: '#fff',
+					borderRadius: 8,
+					boxShadow: '0 2px 8px #0001',
+					padding: 24,
+					overflowX: 'auto',
+					position: 'relative',
+				}}
+				onClick={closeAllTagDropdowns}
+			>
+				{stages.map((stage, idx) => {
+					const status = getStageStatus(idx);
+					let stageBg = '#f0f0f0';
+					let stageColor = '#222';
+					let borderWidth = 2;
+					let borderStyle = 'solid';
+					let borderColor = '#e0e0e0';
+					let boxShadow = '0 1px 4px #0001';
+					if (status === 'past') {
+						stageBg = '#e0e0e0';
+						stageColor = '#888';
+						borderColor = '#d0d0d0';
+						borderWidth = 2;
+					} else if (status === 'current') {
+						stageBg = '#fffbe6';
+						stageColor = '#222';
+						borderColor = '#ffeb3b'; // bright yellow for active
+						borderWidth = 3;
+						boxShadow = 'none';
+					}
+					const showStageOverview = (status === 'past' || (status === 'current' && summaries[idx] && showOverview[idx] === true));
+					return (
+						<div
+							key={idx}
+							style={{
+								background: stageBg,
+								color: stageColor,
+								borderStyle,
+								borderWidth,
+								borderColor,
+								borderRadius: 10,
+								boxShadow,
+								padding: 12,
+								marginBottom: 8,
+								marginTop: 0,
+								minHeight: 60 + 48 * maxQuestions,
+								display: 'flex',
+								flexDirection: 'column',
+								alignItems: 'stretch',
+								transition: 'background 0.2s, color 0.2s, border 0.2s',
+								position: 'relative',
+								overflow: 'visible',
+							}}
+						>
+							<div
+								style={{
+									fontWeight: 'bold',
+									fontSize: 20,
+									textAlign: 'center',
+									marginBottom: 16,
+									borderBottom: '2px solid #1976d2',
+									paddingBottom: 8,
+									background: 'transparent',
+									color: stageColor,
+									borderRadius: 6,
+									transition: 'background 0.2s, color 0.2s',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									gap: 8,
+								}}
+							>
+								{`Stage ${idx + 1}: ${stage.label}`}
+								<button
+									type="button"
+									onClick={() => handleStageSwitch(idx)}
+									disabled={!canSwitchToStage(idx)}
+									style={{
+										marginLeft: 8,
+										background: '#1976d2',
+										color: '#fff',
+										border: 'none',
+										borderRadius: 4,
+										padding: '2px 10px',
+										fontWeight: 'bold',
+										fontSize: 16,
+										cursor: !canSwitchToStage(idx) ? 'not-allowed' : 'pointer',
+										opacity: !canSwitchToStage(idx) ? 0.5 : 1,
+										lineHeight: 1,
+									}}
+									title="Switch to this stage"
+								>
+									Go
+								</button>
+							</div>
+							{showOverview[idx] === true && (
+								<div style={{
+									background: 'orange',
+									color: '#fff',
+									borderRadius: 8,
+									padding: '14px 12px',
+									fontWeight: 'bold',
+									fontSize: 15,
+									boxShadow: '0 2px 8px #0002',
+									marginBottom: 12,
+									marginTop: 0,
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'space-between',
+								}}>
+									<div>
+										<div style={{ fontSize: 13, marginBottom: 4, opacity: 0.85 }}>
+											Stage {idx + 1} Overview
+										</div>
+										<div>{summaries[idx]}</div>
+									</div>
+									<button
+										onClick={e => { e.stopPropagation(); toggleOverview(idx); }}
+										style={{
+											marginLeft: 16,
+											background: 'transparent',
+											border: 'none',
+											color: '#fff',
+											fontSize: 18,
+											cursor: 'pointer',
+											padding: 0,
+											lineHeight: 1,
+										}}
+										aria-label="Hide overview"
+									>▲</button>
+								</div>
+							)}
+							{status === 'past' && summaries[idx] && showOverview[idx] === false && (
+								<button
+									onClick={e => { e.stopPropagation(); toggleOverview(idx); }}
+									style={{
+										background: 'orange',
+										color: '#fff',
+										border: 'none',
+										borderRadius: 6,
+										padding: '4px 10px',
+										fontWeight: 'bold',
+										cursor: 'pointer',
+										zIndex: 10,
+										marginBottom: 12,
+										marginTop: 0,
+										alignSelf: 'flex-end',
+									}}
+									aria-label="Show overview"
+								>Show Overview</button>
+							)}
+							{Array.from({ length: Math.max(maxQuestions, stage.questions.length) }).map((_, rowIdx) => {
+								const isCurrent = current.stageIdx === idx && current.qIdx === rowIdx;
+								const isDetected = isCurrent && detectedQuestion && stage.questions[rowIdx]?.trim() === detectedQuestion.trim();
+								const isVisitedQ = isVisited(idx, rowIdx);
+								// Only highlight if detected by model or visited
+								let bg = '';
+								let color = '#222';
+								if (isDetected || isVisitedQ) {
+									bg = 'lightgray';
+									color = '#888';
+								} else if (stage.questions[rowIdx]) {
+									bg = '#f5faff';
+									color = '#222';
+								}
+								return (
+									<div
+										key={`${rowIdx}-${idx}`}
+										style={{
+											minHeight: 40,
+											margin: 2,
+											borderRadius: 6,
+											background: bg,
+											color,
+											fontSize: 15,
+											border: stage.questions[rowIdx] ? '1px solid #b6d4fa' : 'none',
+											transition: 'background 0.2s, color 0.2s',
+											opacity: stage.questions[rowIdx] ? 1 : 0,
+											boxShadow: isCurrent ? '0 0 0 2px #ffeb3b' : undefined,
+											display: 'flex',
+											flexDirection: 'column',
+											position: 'relative',
+											padding: 0,
+											pointerEvents: 'none', // Disable click
+											userSelect: 'none', // Disable click
+										}}
+										tabIndex={stage.questions[rowIdx] ? 0 : -1}
+										aria-label={stage.questions[rowIdx] || ''}
+									>
+										<div
+											style={{
+												display: 'flex',
+												alignItems: 'center',
+												width: '100%',
+												padding: '8px 6px',
+											}}
+										>
+											<span style={{ flex: 1 }}>{stage.questions[rowIdx] || ''}</span>
+											{/* Follow-up "?" button */}
+											{stage.questions[rowIdx] && (
+												<button
+													type="button"
+													onClick={e => {
+														e.stopPropagation();
+														if (!followups[`${idx}_${rowIdx}`]) handleAddFollowup(idx, rowIdx);
+													}}
+													disabled={getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`]}
+													style={{
+														marginLeft: 8,
+														background: 'transparent',
+														color: '#1976d2',
+														border: 'none',
+														borderRadius: '50%',
+														fontWeight: 'bold',
+														fontSize: 18,
+														cursor: getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`] ? 'not-allowed' : 'pointer',
+														opacity: getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`] ? 0.5 : 1,
+														width: 28,
+														height: 28,
+														display: 'flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+													}}
+													title="Suggest follow-up"
+													aria-label="Suggest follow-up"
+												>
+													?
+												</button>
+											)}
+											{stage.questions[rowIdx] && (
+												<button
+													type="button"
+													onClick={e => {
+														e.stopPropagation();
+														handleDeleteQuestion(idx, rowIdx);
+													}}
+													disabled={getStageStatus(idx) === 'past' || finished}
+													style={{
+														marginLeft: 8,
+														background: 'transparent',
+														color: '#888',
+														border: 'none',
+														borderRadius: 4,
+														fontWeight: 'bold',
+														fontSize: 18,
+														cursor: getStageStatus(idx) === 'past' || finished ? 'not-allowed' : 'pointer',
+														opacity: getStageStatus(idx) === 'past' || finished ? 0.5 : 1,
+														lineHeight: 1,
+														alignSelf: 'center',
+													}}
+													title="Delete question"
+													aria-label="Delete question"
+												>
+													×
+												</button>
+											)}
+										</div>
+										{tags[`${idx}_${rowIdx}`] && (
+											<div style={{ position: 'relative', width: '100%', marginTop: -15, marginBottom: 10 }}>
+												<TagShape
+													word={tags[`${idx}_${rowIdx}`].word}
+													onClick={e => {
+														if (getStageStatus(idx) !== 'past' && !finished) {
+															e.stopPropagation();
+															toggleTagDropdown(idx, rowIdx);
+														}
+													}}
+												/>
+												{tags[`${idx}_${rowIdx}`].dropdownOpen && (
+													<TagDropdown
+														onSelect={word => setTagWord(idx, rowIdx, word)}
+														onClose={closeAllTagDropdowns}
+													/>
+												)}
+											</div>
+										)}
+										{/* Follow-up box below the question */}
+										{followups[`${idx}_${rowIdx}`] && (
+											<div
+												style={{
+													margin: '8px 0 0 0',
+													padding: '12px 14px',
+													border: '2px dotted #1976d2',
+													borderRadius: 8,
+													background: '#fafdff',
+													color: '#1976d2',
+													fontWeight: 500,
+													fontSize: 15,
+													boxShadow: '0 1px 4px #1976d222',
+													cursor: 'pointer',
+													userSelect: 'none',
+												}}
+												onClick={e => {
+													e.stopPropagation();
+													handlePromoteFollowup(idx, rowIdx);
+												}}
+												title="Promote to question"
+												aria-label="Promote follow-up to question"
+											>
+												{followups[`${idx}_${rowIdx}`]}
+											</div>
+										)}
+									</div>
+								);
+							})}
+							{/* Stage-level follow-up at the end */}
+							{stageFollowups[idx] && (
+								<div
+									style={{
+										margin: '10px 2px 0 2px',
+										padding: '12px 14px',
+										border: '2px dotted #2e7d32',
+										borderRadius: 8,
+										background: '#f6fff6',
+										color: '#2e7d32',
+										fontWeight: 500,
+										fontSize: 15,
+										boxShadow: '0 1px 4px #2e7d3222',
+										cursor: 'pointer',
+										userSelect: 'none',
+									}}
+									onClick={e => {
+										e.stopPropagation();
+										handlePromoteStageFollowup(idx);
+									}}
+									title="Promote to question"
+									aria-label="Promote follow-up to question"
+								>
+									{stageFollowups[idx]}
+								</div>
+							)}
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
+export default App;

@@ -17,7 +17,7 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
   const pcRef = useRef(null);
   const dcRef = useRef(null);
   const [isActive, setIsActive] = useState(false);
-
+  const [newTheme, setNewTheme] = useState('');
   // Use prop 'script' if provided, else use local textarea
   const effectiveScript = script !== undefined ? script : questionsText;
 
@@ -29,7 +29,28 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
     }
     // eslint-disable-next-line
   }, [autoStart, effectiveScript]);
-
+  // const checkNewTheme = async (script) => {
+  //   try {
+  //     const res = await fetch(`${BACKEND_URL}/theme`, {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ context:  }),
+  //     });
+  //     if (!res.ok) {
+  //       setNewTheme('Error checking new theme');
+  //       return;
+  //     }
+  //     const data = await res.json();
+  //     // 解析返回内容
+  //     // 假设返回格式和之前一样，data.client_secret.value 里有 answer
+  //     // 实际上你要根据后端返回结构调整
+  //     // 这里假设 data.client_secret.value 是你要的内容
+  //     // 你可能需要根据实际返回结构调整
+  //     setNewTheme(data.result || 'Error or no result');
+  //   } catch (err) {
+  //     setNewTheme('Error: ' + (err.message || String(err)));
+  //   }
+  // };
   const handleStart = async () => {
     setError('');
     if (!effectiveScript.trim()) {
@@ -80,6 +101,8 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
               if (textObj && textObj.text) {
                 setDetectedQuestion(textObj.text);
                 if (onDetectedQuestion) onDetectedQuestion(textObj.text);
+                // 检测到问题后，调用 theme 检测
+                // checkNewTheme(effectiveScript);
                 return;
               }
             }
@@ -154,7 +177,16 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
         <div style={{ minHeight: 32, background: '#f5f5f5', borderRadius: 8, padding: 10, fontSize: 17, color: '#1976d2', border: '1px solid #ddd' }}>
           {detectedQuestion || <span style={{ color: '#aaa' }}>[Waiting for detection...]</span>}
         </div>
+        
       </div>
+      {newTheme && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontWeight: 500, marginBottom: 4, color: '#d2691e' }}>New Theme Detection Result:</div>
+          <div style={{ minHeight: 32, background: '#fffbe6', borderRadius: 8, padding: 10, fontSize: 17, color: '#d2691e', border: '1px solid #ffe58f' }}>
+            {newTheme}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

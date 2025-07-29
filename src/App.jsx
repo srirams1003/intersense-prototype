@@ -64,29 +64,29 @@ function getRandomFollowup() {
 	return followups[Math.floor(Math.random() * followups.length)];
 }
 
-// const defaultScript = `Stage 1: Decision to Open Netflix
-// - On an average day, why do you open up Netflix?
-// - Tell us about the times of day you watch?
-// - Who is with you when you are watching Netflix?
-// - What [other things] are you doing when you are watching?
-// - Tell us about your mood when you are watching?
-//
-// Stage 2: Content Discovery
-// - Once you have Netflix open, how do you choose what to watch?
-// - Describe your strategies to find recommended content. What do you usually end up watching?
-// - How do you get recommendations? How often are these from friends/family or other sources? How often from Netflix?
-// - Which of these recommendations are most valuable to you?
-// - What does it feel like to find something not recommended vs. something recommended?
-// - How do you feel about recommendation engines supporting you in discovering new content?
-//
-// Stage 3: Content Consumption
-// - Can you describe a time when Netflix started playing the next episode/movie automatically?
-// - How long do you tend to watch Netflix content at a time?
-// - If you are watching a TV show, do you tend to watch one or more than one episode at a time?
-// - What are your thoughts on how Netflix releases episodes—weekly or whole seasons at once?
-// - If you finish a movie, do you tend to watch another one? What do you do when you see the recommendation starting to be played automatically?
-// `;
-const defaultScript = ``;
+const defaultScript = `Stage 1: Decision to Open Netflix
+- On an average day, why do you open up Netflix?
+- Tell us about the times of day you watch?
+- Who is with you when you are watching Netflix?
+- What [other things] are you doing when you are watching?
+- Tell us about your mood when you are watching?
+
+Stage 2: Content Discovery
+- Once you have Netflix open, how do you choose what to watch?
+- Describe your strategies to find recommended content. What do you usually end up watching?
+- How do you get recommendations? How often are these from friends/family or other sources? How often from Netflix?
+- Which of these recommendations are most valuable to you?
+- What does it feel like to find something not recommended vs. something recommended?
+- How do you feel about recommendation engines supporting you in discovering new content?
+
+Stage 3: Content Consumption
+- Can you describe a time when Netflix started playing the next episode/movie automatically?
+- How long do you tend to watch Netflix content at a time?
+- If you are watching a TV show, do you tend to watch one or more than one episode at a time?
+- What are your thoughts on how Netflix releases episodes—weekly or whole seasons at once?
+- If you finish a movie, do you tend to watch another one? What do you do when you see the recommendation starting to be played automatically?
+`;
+// const defaultScript = ``;
 
 function App() {
 	// ...existing state...
@@ -205,14 +205,32 @@ function App() {
 		});
 	}
 
-	function handleMark() {
-		if (current.stageIdx === null || current.qIdx === null) return;
-		if (getStageStatus(current.stageIdx) === 'past' || finished) return;
-		const key = `${current.stageIdx}_${current.qIdx}`;
-		setTags((prev) => ({
-			...prev,
-			[key]: { word: getRandomWord(), dropdownOpen: false }
-		}));
+	function handleMark(stageIdx, qIdx) {
+		if (stageIdx === null || qIdx === null) return;
+		if (getStageStatus(stageIdx) === 'past' || finished) return;
+		const key = `${stageIdx}_${qIdx}`;
+		setTags((prev) => {
+			const existingTags = prev[key] || [];
+			const newTag = { word: getRandomWord(), dropdownOpen: false, isEditing: false };
+			return {
+				...prev,
+				[key]: Array.isArray(existingTags) ? [...existingTags, newTag] : [newTag]
+			};
+		});
+	}
+
+	function handleAdd(stageIdx, qIdx) {
+		if (stageIdx === null || qIdx === null) return;
+		if (getStageStatus(stageIdx) === 'past' || finished) return;
+		const key = `${stageIdx}_${qIdx}`;
+		setTags((prev) => {
+			const existingTags = prev[key] || [];
+			const newTag = { word: '', dropdownOpen: false, isEditing: true };
+			return {
+				...prev,
+				[key]: Array.isArray(existingTags) ? [...existingTags, newTag] : [newTag]
+			};
+		});
 	}
 
 	function handleCurrentOverview() {
@@ -260,32 +278,95 @@ function App() {
 		setLastCompletedStageIdx(stages.length - 1);
 	}
 
-	function TagShape({ word, onClick }) {
+	function TagShape({ word, onClick, isEditing = false, onEdit = null }) {
+		// Ensure word is a string and handle undefined/null cases
+		const safeWord = word || '';
+		const inputRef = React.useRef(null);
+		
+		// Calculate width based on text length
+		const textWidth = Math.max(safeWord.length * 8, 60); // Minimum 60px, 8px per character
+		const totalWidth = textWidth + 20; // Add padding for the tag shape
+		
 		return (
 			<div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
 				<svg
-					width={110}
+					width={totalWidth}
 					height={40}
 					style={{ cursor: 'pointer', display: 'block' }}
-					onClick={onClick}
+					onClick={e => {
+						e.stopPropagation();
+						if (isEditing) {
+							// If editing, complete the edit
+							// console.log('inputRef.current:', inputRef.current);
+							// console.log('inputRef.current.value:', inputRef.current?.value);
+							const currentValue = inputRef.current ? inputRef.current.value : safeWord;
+							// console.log('currentValue:', currentValue);
+							onEdit && onEdit(currentValue, true);
+						} else {
+							// If not editing, handle normal click
+							onClick && onClick(e);
+						}
+					}}
 				>
 					<polygon
-						points="0,0 90,0 110,20 90,40 0,40"
+						points={`0,0 ${textWidth},0 ${totalWidth},20 ${textWidth},40 0,40`}
 						fill="#1976d2"
 						stroke="#1250a3"
 						strokeWidth="2"
 					/>
-					<text
-						x="55"
-						y="25"
-						textAnchor="middle"
-						fill="#fff"
-						fontSize="16"
-						fontWeight="bold"
-						style={{ pointerEvents: 'none', userSelect: 'none' }}
-					>
-						{word}
-					</text>
+					{isEditing ? (
+						<foreignObject x="10" y="8" width={textWidth} height="24">
+							<input
+								ref={inputRef}
+								type="text"
+								value={safeWord}
+								onChange={(e) => onEdit && onEdit(e.target.value, false)}
+								// onBlur={() => {
+								// 	console.log('onBlur - inputRef.current:', inputRef.current);
+								// 	console.log('onBlur - inputRef.current.value:', inputRef.current?.value);
+								// 	const currentValue = inputRef.current ? inputRef.current.value : safeWord;
+								// 	console.log('onBlur - currentValue:', currentValue);
+								// 	onEdit && onEdit(currentValue, true);
+								// }}
+								onKeyPress={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										const currentValue = inputRef.current ? inputRef.current.value : safeWord;
+										onEdit && onEdit(currentValue, true);
+									}
+								}}
+								onClick={(e) => e.stopPropagation()}
+								style={{
+									width: '100%',
+									height: '100%',
+									border: 'none',
+									background: 'transparent',
+									color: '#fff',
+									fontSize: '16px',
+									fontWeight: 'bold',
+									textAlign: 'center',
+									outline: 'none',
+									padding: 0,
+									margin: 0,
+									fontFamily: 'inherit',
+								}}
+								autoFocus
+								placeholder="Enter text..."
+							/>
+						</foreignObject>
+					) : (
+						<text
+							x={totalWidth / 2}
+							y="25"
+							textAnchor="middle"
+							fill="#fff"
+							fontSize="16"
+							fontWeight="bold"
+							style={{ pointerEvents: 'none', userSelect: 'none' }}
+						>
+							{safeWord}
+						</text>
+					)}
 				</svg>
 			</div>
 		);
@@ -331,13 +412,14 @@ function App() {
 		);
 	}
 
-	function toggleTagDropdown(stageIdx, qIdx) {
+	function toggleTagDropdown(stageIdx, qIdx, tagIndex = 0) {
 		const key = `${stageIdx}_${qIdx}`;
 		setTags((prev) => {
 			const newTags = { ...prev };
 			Object.keys(newTags).forEach(k => {
 				if (k === key) {
-					newTags[k] = { ...newTags[k], dropdownOpen: !newTags[k].dropdownOpen };
+					newTags[k] = Array.isArray(newTags[k]) ? [...newTags[k]] : [newTags[k]];
+					newTags[k][tagIndex] = { ...newTags[k][tagIndex], dropdownOpen: !newTags[k][tagIndex].dropdownOpen };
 				} else {
 					newTags[k] = { ...newTags[k], dropdownOpen: false };
 				}
@@ -346,12 +428,26 @@ function App() {
 		});
 	}
 
-	function setTagWord(stageIdx, qIdx, word) {
+	function setTagWord(stageIdx, qIdx, word, tagIndex = 0, keepEditing = false) {
 		const key = `${stageIdx}_${qIdx}`;
-		setTags((prev) => ({
-			...prev,
-			[key]: { word, dropdownOpen: false }
-		}));
+		const safeWord = word || '';
+		console.log('safeWord', safeWord);
+		setTags((prev) => {
+			const existingTags = prev[key] || [];
+			console.log('existingTags', existingTags);
+			if (Array.isArray(existingTags)) {
+				const newTags = [...existingTags];
+				newTags[tagIndex] = { 
+					...newTags[tagIndex], 
+					word: safeWord, 
+					dropdownOpen: false,
+					isEditing: keepEditing ? newTags[tagIndex].isEditing : false
+				};
+				return { ...prev, [key]: newTags };
+			} else {
+				return { ...prev, [key]: { word: safeWord, dropdownOpen: false, isEditing: keepEditing ? prev[key]?.isEditing : false } };
+			}
+		});
 	}
 
 	function closeAllTagDropdowns() {
@@ -588,7 +684,7 @@ function App() {
 				</span>
 				<button
 					type="button"
-					onClick={handleMark}
+					onClick={() => handleMark(current.stageIdx, current.qIdx)}
 					disabled={current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished}
 					style={{
 						marginLeft: 32,
@@ -627,8 +723,8 @@ function App() {
 				</button>
 				<button
 					type="button"
-					onClick={handleAddStageFollowup}
-					disabled={current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx]}
+					onClick={() => handleAdd(current.stageIdx, current.qIdx)}
+					disabled={current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished}
 					style={{
 						background: '#2e7d32',
 						color: '#fff',
@@ -637,12 +733,12 @@ function App() {
 						padding: '8px 18px',
 						fontWeight: 'bold',
 						fontSize: 16,
-						cursor: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx] ? 'not-allowed' : 'pointer',
-						opacity: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished || stageFollowups[current.stageIdx] ? 0.5 : 1,
+						cursor: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 'not-allowed' : 'pointer',
+						opacity: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 0.5 : 1,
 						boxShadow: '0 1px 4px #0001',
 					}}
 				>
-					Follow Up
+					Add
 				</button>
 				<button
 					type="button"
@@ -686,7 +782,7 @@ function App() {
 					overflowX: 'auto',
 					position: 'relative',
 				}}
-				onClick={closeAllTagDropdowns}
+				// onClick={closeAllTagDropdowns}
 			>
 				{stages.map((stage, idx) => {
 					const status = getStageStatus(idx);
@@ -861,7 +957,7 @@ function App() {
 											flexDirection: 'column',
 											position: 'relative',
 											padding: 0,
-											pointerEvents: 'none', // Disable click
+											pointerEvents: 'auto', // Enable click
 											userSelect: 'none', // Disable click
 										}}
 										tabIndex={stage.questions[rowIdx] ? 0 : -1}
@@ -876,82 +972,232 @@ function App() {
 											}}
 										>
 											<span style={{ flex: 1 }}>{stage.questions[rowIdx] || ''}</span>
-											{/* Follow-up "?" button */}
-											{stage.questions[rowIdx] && (
-												<button
-													type="button"
-													onClick={e => {
-														e.stopPropagation();
-														if (!followups[`${idx}_${rowIdx}`]) handleAddFollowup(idx, rowIdx);
-													}}
-													disabled={getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`]}
+										</div>
+										
+										{/* Tags and placeholder container */}
+										{stage.questions[rowIdx] && (
+											<div
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: 8,
+													margin: '4px 6px',
+													flexWrap: 'wrap',
+												}}
+											>
+												{/* Tags container */}
+												<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+													{tags[`${idx}_${rowIdx}`] && Array.isArray(tags[`${idx}_${rowIdx}`]) && 
+														tags[`${idx}_${rowIdx}`].map((tag, tagIndex) => (
+															<TagShape
+																key={tagIndex}
+																word={tag.word || ''}
+																onClick={e => {
+																	if (getStageStatus(idx) !== 'past' && !finished) {
+																		e.stopPropagation();
+																		if ((tag.word || '') === '' || tag.isEditing) {
+																			// If tag is empty or already editing, start editing
+																			setTags(prev => {
+																				const key = `${idx}_${rowIdx}`;
+																				const existingTags = prev[key] || [];
+																				if (Array.isArray(existingTags)) {
+																					const newTags = [...existingTags];
+																					newTags[tagIndex] = { ...newTags[tagIndex], isEditing: true };
+																					return { ...prev, [key]: newTags };
+																				}
+																				return prev;
+																			});
+																		} else {
+																			// If tag has content, toggle dropdown
+																			toggleTagDropdown(idx, rowIdx, tagIndex);
+																		}
+																	}
+																}}
+																isEditing={tag.isEditing}
+																onEdit={(newWord, isFinal) => {
+																	setTagWord(idx, rowIdx, newWord, tagIndex, !isFinal);
+																	console.log('isFinal', isFinal);
+																	if (isFinal) {
+																		// Update the editing state for single tag
+																		setTags(prev => {
+																			const key = `${idx}_${rowIdx}`;
+																			const existingTags = prev[key] || [];
+																			if (Array.isArray(existingTags)) {
+																				const newTags = [...existingTags];
+																				newTags[tagIndex] = { ...newTags[tagIndex], isEditing: false };
+																				return { ...prev, [key]: newTags };
+																			}
+																			return prev;
+																		});
+																	}
+																}}
+															/>
+														))
+													}
+													{tags[`${idx}_${rowIdx}`] && !Array.isArray(tags[`${idx}_${rowIdx}`]) && (
+														<TagShape
+															word={tags[`${idx}_${rowIdx}`].word || ''}
+															onClick={e => {
+																if (getStageStatus(idx) !== 'past' && !finished) {
+																	e.stopPropagation();
+																	const currentTag = tags[`${idx}_${rowIdx}`];
+																	if ((currentTag.word || '') === '' || currentTag.isEditing) {
+																		// If tag is empty or already editing, start editing
+																		setTags(prev => {
+																			const key = `${idx}_${rowIdx}`;
+																			return { ...prev, [key]: { ...prev[key], isEditing: true } };
+																		});
+																	} else {
+																		// If tag has content, toggle dropdown
+																		toggleTagDropdown(idx, rowIdx);
+																	}
+																}
+															}}
+															isEditing={tags[`${idx}_${rowIdx}`].isEditing}
+															onEdit={(newWord, isFinal) => {
+																setTagWord(idx, rowIdx, newWord, 0, !isFinal);
+																if (isFinal) {
+																	// Update the editing state for single tag
+																	setTags(prev => {
+																		const key = `${idx}_${rowIdx}`;
+																		return { ...prev, [key]: { ...prev[key], isEditing: false } };
+																	});
+																}
+															}}
+														/>
+													)}
+													{tags[`${idx}_${rowIdx}`]?.dropdownOpen && (
+														<TagDropdown
+															onSelect={word => {
+																// Find which tag is open
+																const currentTags = tags[`${idx}_${rowIdx}`];
+																if (Array.isArray(currentTags)) {
+																	const openTagIndex = currentTags.findIndex(tag => tag.dropdownOpen);
+																	if (openTagIndex !== -1) {
+																		setTagWord(idx, rowIdx, word, openTagIndex);
+																	}
+																} else {
+																	setTagWord(idx, rowIdx, word);
+																}
+															}}
+															// onClose={closeAllTagDropdowns}
+														/>
+													)}
+												</div>
+												
+												{/* Placeholder area with hover buttons */}
+												<div
 													style={{
-														marginLeft: 8,
-														background: 'transparent',
-														color: '#1976d2',
-														border: 'none',
-														borderRadius: '50%',
-														fontWeight: 'bold',
-														fontSize: 18,
-														cursor: getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`] ? 'not-allowed' : 'pointer',
-														opacity: getStageStatus(idx) === 'past' || finished || !!followups[`${idx}_${rowIdx}`] ? 0.5 : 1,
-														width: 28,
-														height: 28,
+														position: 'relative',
+														height: 32,
+														borderRadius: 4,
+														border: '1px dashed #ddd',
+														background: '#fafafa',
 														display: 'flex',
 														alignItems: 'center',
 														justifyContent: 'center',
+														transition: 'all 0.2s',
+														cursor: 'pointer',
+														width: 'fit-content',
+														minWidth: 120,
 													}}
-													title="Suggest follow-up"
-													aria-label="Suggest follow-up"
+													onMouseEnter={(e) => {
+														e.currentTarget.style.background = '#f0f0f0';
+														e.currentTarget.style.borderColor = '#ccc';
+													}}
+													onMouseLeave={(e) => {
+														e.currentTarget.style.background = '#fafafa';
+														e.currentTarget.style.borderColor = '#ddd';
+													}}
 												>
-													?
-												</button>
-											)}
-											{stage.questions[rowIdx] && (
-												<button
-													type="button"
-													onClick={e => {
-														e.stopPropagation();
-														handleDeleteQuestion(idx, rowIdx);
-													}}
-													disabled={getStageStatus(idx) === 'past' || finished}
-													style={{
-														marginLeft: 8,
-														background: 'transparent',
-														color: '#888',
-														border: 'none',
-														borderRadius: 4,
-														fontWeight: 'bold',
-														fontSize: 18,
-														cursor: getStageStatus(idx) === 'past' || finished ? 'not-allowed' : 'pointer',
-														opacity: getStageStatus(idx) === 'past' || finished ? 0.5 : 1,
-														lineHeight: 1,
-														alignSelf: 'center',
-													}}
-													title="Delete question"
-													aria-label="Delete question"
-												>
-													×
-												</button>
-											)}
-										</div>
-										{tags[`${idx}_${rowIdx}`] && (
-											<div style={{ position: 'relative', width: '100%', marginTop: -15, marginBottom: 10 }}>
-												<TagShape
-													word={tags[`${idx}_${rowIdx}`].word}
-													onClick={e => {
-														if (getStageStatus(idx) !== 'past' && !finished) {
-															e.stopPropagation();
-															toggleTagDropdown(idx, rowIdx);
-														}
-													}}
-												/>
-												{tags[`${idx}_${rowIdx}`].dropdownOpen && (
-													<TagDropdown
-														onSelect={word => setTagWord(idx, rowIdx, word)}
-														onClose={closeAllTagDropdowns}
-													/>
-												)}
+													{/* Hover buttons container */}
+													<div
+														style={{
+															display: 'flex',
+															gap: 8,
+															opacity: 0,
+															transition: 'opacity 0.2s',
+														}}
+														onMouseEnter={(e) => {
+															e.currentTarget.style.opacity = 1;
+															// Hide the placeholder text when buttons are visible
+															const placeholderText = e.currentTarget.parentElement.querySelector('.placeholder-text');
+															if (placeholderText) {
+																placeholderText.style.opacity = 0;
+															}
+														}}
+														onMouseLeave={(e) => {
+															e.currentTarget.style.opacity = 0;
+															// Show the placeholder text when buttons are hidden
+															const placeholderText = e.currentTarget.parentElement.querySelector('.placeholder-text');
+															if (placeholderText) {
+																placeholderText.style.opacity = 1;
+															}
+														}}
+													>
+														{/* Mark button */}
+														<button
+															type="button"
+															onClick={e => {
+																e.stopPropagation();
+																handleMark(idx, rowIdx);
+															}}
+															disabled={getStageStatus(idx) === 'past' || finished}
+															style={{
+																background: '#1976d2',
+																color: '#fff',
+																border: 'none',
+																borderRadius: 4,
+																padding: '4px 8px',
+																fontSize: 12,
+																fontWeight: 'bold',
+																cursor: getStageStatus(idx) === 'past' || finished ? 'not-allowed' : 'pointer',
+																opacity: getStageStatus(idx) === 'past' || finished ? 0.5 : 1,
+															}}
+															title="Mark this question"
+														>
+															Mark
+														</button>
+														
+														{/* Add button */}
+														<button
+															type="button"
+															onClick={e => {
+																e.stopPropagation();
+																handleAdd(idx, rowIdx);
+															}}
+															disabled={getStageStatus(idx) === 'past' || finished}
+															style={{
+																background: '#2e7d32',
+																color: '#fff',
+																border: 'none',
+																borderRadius: 4,
+																padding: '4px 8px',
+																fontSize: 12,
+																fontWeight: 'bold',
+																cursor: getStageStatus(idx) === 'past' || finished ? 'not-allowed' : 'pointer',
+																opacity: getStageStatus(idx) === 'past' || finished ? 0.5 : 1,
+															}}
+															title="Add tag for this question"
+														>
+															Add
+														</button>
+													</div>
+													
+													{/* Default placeholder text */}
+													<span
+														className="placeholder-text"
+														style={{
+															color: '#999',
+															fontSize: 12,
+															position: 'absolute',
+															pointerEvents: 'none',
+															transition: 'opacity 0.2s',
+														}}
+													>
+														Hover for actions
+													</span>
+												</div>
 											</div>
 										)}
 										{/* Follow-up box below the question */}

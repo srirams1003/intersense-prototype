@@ -741,7 +741,12 @@ function App() {
 					{/* Show the POC when active */}
 					{isRealtimeActive && (
 						<div style={{ marginBottom: 32 }}>
-							<OpenAIRealtimePOC key="realtime-poc" script={scriptForAPI} onDetectedQuestion={setDetectedQuestion} autoStart={false} />
+							<OpenAIRealtimePOC
+								key="realtime-poc"
+								script={scriptForAPI}
+								onDetectedQuestion={setDetectedQuestion}
+								autoStart={isRealtimeActive} // <-- fix: pass the correct prop
+							/>
 						</div>
 					)}
 					<div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>

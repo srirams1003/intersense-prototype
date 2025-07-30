@@ -92,10 +92,12 @@ function App() {
 	// ...existing state...
 	const [scriptText, setScriptText] = useState(defaultScript);
 	const [stages, setStages] = useState(parseScript(defaultScript));
+	const [scriptLoaded, setScriptLoaded] = useState(false);
+	const [researchQuestion, setResearchQuestion] = useState('We extend this work by investigating the design elements of Netflix, the most used SVOD, for the impact they have on users\' senses of agency.');
+	const [background, setBackground] = useState('Users often turn to subscription video on demand (SVOD) platforms for entertainment. However, these platforms sometimes employ manipulative tactics that undermine a user\'s sense of agency over time and content choice to increase their share of a user\'s attention. Prior research has investigated how interface designs affect a user\'s sense of agency on social media and YouTube. For example, YouTube\'s autoplay left users feeling like they had less control over their time');
 	const [current, setCurrent] = useState({ stageIdx: null, qIdx: null });
-	// // TODO: setting this to 0.5 for now. might night to dynamically set it later based on requirements
-	// const [similarity, setSimilarity] = useState(1);
-	const [similarity, setSimilarity] = useState(0.5);
+	// Fixed highlight intensity
+	const similarity = 0.5;
 	const [visited, setVisited] = useState([]); // Only declare ONCE
 	const [tags, setTags] = useState({});
 	const [summaries, setSummaries] = useState({});
@@ -128,14 +130,11 @@ function App() {
 		setLastCompletedStageIdx(null);
 		setFollowups({});
 		setStageFollowups({});
+		setIsRealtimeActive(false);
+		setScriptLoaded(true);
 	}
 
-	function handleSimilarityChange(e) {
-		let val = parseFloat(e.target.value);
-		if (isNaN(val)) val = 1;
-		val = Math.max(0, Math.min(1, val));
-		setSimilarity(val);
-	}
+
 
 	function isVisited(stageIdx, qIdx) {
 		return visited.some(v => v.stageIdx === stageIdx && v.qIdx === qIdx);
@@ -276,6 +275,7 @@ function App() {
 		setFinished(true);
 		setCurrent({ stageIdx: null, qIdx: null });
 		setLastCompletedStageIdx(stages.length - 1);
+		setIsRealtimeActive(false);
 	}
 
 	function TagShape({ word, onClick, isEditing = false, onEdit = null }) {
@@ -566,30 +566,35 @@ function App() {
 		});
 	}
 
-	// Get current stage's questions as a script string
-	const currentStageQuestions = current.stageIdx !== null && stages[current.stageIdx]?.questions
-		? stages[current.stageIdx].questions
-		: [];
-	const scriptForAPI = currentStageQuestions.map(q => `- ${q}`).join('\n');
+	// Get all stages' questions as a script string
+	const allQuestions = stages.flatMap(stage => stage.questions);
+	const scriptForAPI = allQuestions.map(q => `- ${q}`).join('\n');
 
 	// Track detected question from POC
 	const [detectedQuestion, setDetectedQuestion] = useState('');
+	const [isRealtimeActive, setIsRealtimeActive] = useState(false);
 
-	// When detectedQuestion changes, update current.qIdx if it matches a question in the current stage
+	// When detectedQuestion changes, find which stage and question it matches
 	React.useEffect(() => {
-		if (current.stageIdx !== null && detectedQuestion) {
-			const idx = currentStageQuestions.findIndex(q => q.trim() === detectedQuestion.trim());
-			if (idx !== -1 && idx !== current.qIdx) {
-				setCurrent(c => ({ ...c, qIdx: idx }));
-				// Add to visited if not already
-				setVisited(prev => {
-					if (prev.some(v => v.stageIdx === current.stageIdx && v.qIdx === idx)) return prev;
-					return [...prev, { stageIdx: current.stageIdx, qIdx: idx }];
-				});
+		if (detectedQuestion) {
+			// Find which stage and question the detected question matches
+			for (let stageIdx = 0; stageIdx < stages.length; stageIdx++) {
+				const stage = stages[stageIdx];
+				const questionIdx = stage.questions.findIndex(q => q.trim() === detectedQuestion.trim());
+				if (questionIdx !== -1) {
+					// Found a match, update current stage and question
+					setCurrent({ stageIdx, qIdx: questionIdx });
+					// Add to visited if not already
+					setVisited(prev => {
+						if (prev.some(v => v.stageIdx === stageIdx && v.qIdx === questionIdx)) return prev;
+						return [...prev, { stageIdx, qIdx: questionIdx }];
+					});
+					break;
+				}
 			}
 		}
 		// eslint-disable-next-line
-	}, [detectedQuestion, current.stageIdx]);
+	}, [detectedQuestion, stages]);
 
 	function isVisited(stageIdx, qIdx) {
 		return visited.some(v => v.stageIdx === stageIdx && v.qIdx === qIdx);
@@ -613,177 +618,166 @@ function App() {
 		if (canSwitchToStage(idx)) {
 			setCurrent({ stageIdx: idx, qIdx: null });
 			setDetectedQuestion('');
+			setIsRealtimeActive(false);
 		}
 	}
 
 	return (
 		<div style={{ padding: 32, background: '#f8f8f8', minHeight: '100vh' }}>
-			{/* Show the POC only when a stage is selected; use key to force remount on stage change */}
-			{current.stageIdx !== null && (
-				<div style={{ marginBottom: 32 }}>
-					<OpenAIRealtimePOC key={current.stageIdx} script={scriptForAPI} onDetectedQuestion={setDetectedQuestion} autoStart />
+			{!scriptLoaded ? (
+				// Load Script Page
+				<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+					<form
+						onSubmit={handleLoadScript}
+						style={{
+							background: '#fff',
+							padding: 40,
+							borderRadius: 12,
+							boxShadow: '0 4px 20px #0001',
+							minWidth: 600,
+							maxWidth: 900,
+						}}
+					>
+						<div style={{ fontWeight: 'bold', fontSize: 24, marginBottom: 20, textAlign: 'center' }}>
+							Interview Script Setup
+						</div>
+						
+						{/* Research Question and Background */}
+						<div style={{ marginBottom: 20 }}>
+							<div style={{ fontWeight: 'bold', marginBottom: 8, fontSize: 16 }}>
+								Research Question & Background:
+							</div>
+							<div style={{ display: 'flex', gap: 20, marginBottom: 12 }}>
+								<div style={{ flex: '1 1 0', minWidth: 0 }}>
+									<div style={{ fontSize: 14, marginBottom: 4, color: '#666' }}>
+										Research Question:
+									</div>
+									<textarea
+										value={researchQuestion}
+										onChange={(e) => setResearchQuestion(e.target.value)}
+										rows={3}
+										style={{
+											width: '100%',
+											padding: 12,
+											borderRadius: 6,
+											border: '1px solid #ccc',
+											fontSize: 14,
+											fontFamily: 'inherit',
+											resize: 'vertical',
+											boxSizing: 'border-box',
+										}}
+										placeholder="Enter your research question..."
+									/>
+								</div>
+								<div style={{ flex: '1 1 0', minWidth: 0 }}>
+									<div style={{ fontSize: 14, marginBottom: 4, color: '#666' }}>
+										Background:
+									</div>
+									<textarea
+										value={background}
+										onChange={(e) => setBackground(e.target.value)}
+										rows={3}
+										style={{
+											width: '100%',
+											padding: 12,
+											borderRadius: 6,
+											border: '1px solid #ccc',
+											fontSize: 14,
+											fontFamily: 'inherit',
+											resize: 'vertical',
+											boxSizing: 'border-box',
+										}}
+										placeholder="Enter background information..."
+									/>
+								</div>
+							</div>
+						</div>
+
+						{/* Interview Script */}
+						<div style={{ marginBottom: 20 }}>
+							<div style={{ fontWeight: 'bold', marginBottom: 8, fontSize: 16 }}>
+								Interview Script:
+							</div>
+							<textarea
+								value={scriptText}
+								onChange={(e) => setScriptText(e.target.value)}
+								rows={15}
+								style={{
+									width: '100%',
+									marginBottom: 20,
+									padding: 12,
+									borderRadius: 8,
+									border: '1px solid #ccc',
+									fontFamily: 'monospace',
+									fontSize: 14,
+									resize: 'vertical',
+								}}
+								placeholder="Paste your interview script here..."
+							/>
+						</div>
+
+						<div style={{ textAlign: 'center' }}>
+							<button
+								type="submit"
+								style={{
+									background: '#1976d2',
+									color: '#fff',
+									border: 'none',
+									borderRadius: 6,
+									padding: '12px 32px',
+									fontWeight: 'bold',
+									fontSize: 16,
+									cursor: 'pointer',
+								}}
+							>
+								Load Script
+							</button>
+						</div>
+					</form>
 				</div>
-			)}
-			<form
-				onSubmit={handleLoadScript}
-				style={{
-					marginBottom: 32,
-					background: '#fff',
-					padding: 20,
-					borderRadius: 8,
-					boxShadow: '0 2px 8px #0002',
-					minWidth: 340,
-				}}
-			>
-				<div style={{ fontWeight: 'bold', marginBottom: 10 }}>Paste Interview Script</div>
-				<textarea
-					value={scriptText}
-					onChange={(e) => setScriptText(e.target.value)}
-					rows={12}
-					style={{
-						width: '100%',
-						marginBottom: 10,
-						padding: 8,
-						borderRadius: 4,
-						border: '1px solid #ccc',
-						fontFamily: 'monospace',
-						fontSize: 14,
-						resize: 'vertical',
-					}}
-				/>
-				<button
-					type="submit"
-					style={{
-						background: '#1976d2',
-						color: '#fff',
-						border: 'none',
-						borderRadius: 4,
-						padding: '8px 16px',
-						fontWeight: 'bold',
-						cursor: 'pointer',
-					}}
-				>
-					Load Script
-				</button>
-			</form>
-			<div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
-				<label style={{ fontSize: 15, marginRight: 8 }}>
-					Similarity (0-1, for highlight intensity): 
-				</label>
-				<input
-					type="number"
-					min={0}
-					max={1}
-					step={0.01}
-					value={similarity}
-					onChange={handleSimilarityChange}
-					style={{ width: 60, fontSize: 15, marginRight: 8 }}
-				/>
-				<span style={{ fontSize: 13, color: '#888' }}>
-					(Set to demo different highlight intensities)
-				</span>
-				<button
-					type="button"
-					onClick={() => handleMark(current.stageIdx, current.qIdx)}
-					disabled={current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished}
-					style={{
-						marginLeft: 32,
-						background: '#1976d2',
-						color: '#fff',
-						border: 'none',
-						borderRadius: 4,
-						padding: '8px 18px',
-						fontWeight: 'bold',
-						fontSize: 16,
-						cursor: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 'not-allowed' : 'pointer',
-						opacity: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 0.5 : 1,
-						boxShadow: '0 1px 4px #0001',
-					}}
-				>
-					Mark
-				</button>
-				<button
-					type="button"
-					onClick={handleCurrentOverview}
-					disabled={current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished}
-					style={{
-						background: '#ff9800',
-						color: '#fff',
-						border: 'none',
-						borderRadius: 4,
-						padding: '8px 18px',
-						fontWeight: 'bold',
-						fontSize: 16,
-						cursor: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished ? 'not-allowed' : 'pointer',
-						opacity: current.stageIdx === null || getStageStatus(current.stageIdx) !== 'current' || finished ? 0.5 : 1,
-						boxShadow: '0 1px 4px #0001',
-					}}
-				>
-					Overview
-				</button>
-				<button
-					type="button"
-					onClick={() => handleAdd(current.stageIdx, current.qIdx)}
-					disabled={current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished}
-					style={{
-						background: '#2e7d32',
-						color: '#fff',
-						border: 'none',
-						borderRadius: 4,
-						padding: '8px 18px',
-						fontWeight: 'bold',
-						fontSize: 16,
-						cursor: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 'not-allowed' : 'pointer',
-						opacity: current.stageIdx === null || current.qIdx === null || getStageStatus(current.stageIdx) === 'past' || finished ? 0.5 : 1,
-						boxShadow: '0 1px 4px #0001',
-					}}
-				>
-					Add
-				</button>
-				<button
-					type="button"
-					onClick={handleFinish}
-					disabled={
-						current.stageIdx !== stages.length - 1 ||
-							finished
-					}
-					style={{
-						background: '#388e3c',
-						color: '#fff',
-						border: 'none',
-						borderRadius: 4,
-						padding: '8px 18px',
-						fontWeight: 'bold',
-						fontSize: 16,
-						marginLeft: 32,
-						cursor:
-						current.stageIdx !== stages.length - 1 || finished
-							? 'not-allowed'
-							: 'pointer',
-						opacity:
-						current.stageIdx !== stages.length - 1 || finished
-							? 0.5
-							: 1,
-						boxShadow: '0 1px 4px #0001',
-					}}
-				>
-					Finish
-				</button>
-			</div>
-			<div
-				style={{
-					display: 'grid',
-					gridTemplateColumns: `repeat(${stages.length}, 1fr)`,
-					gap: 24,
-					background: '#fff',
-					borderRadius: 8,
-					boxShadow: '0 2px 8px #0001',
-					padding: 24,
-					overflowX: 'auto',
-					position: 'relative',
-				}}
-				// onClick={closeAllTagDropdowns}
-			>
+			) : (
+				// Interview Script Page
+				<>
+					{/* Show the POC when active */}
+					{isRealtimeActive && (
+						<div style={{ marginBottom: 32 }}>
+							<OpenAIRealtimePOC key="realtime-poc" script={scriptForAPI} onDetectedQuestion={setDetectedQuestion} autoStart={false} />
+						</div>
+					)}
+					<div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+						<button
+							type="button"
+							onClick={isRealtimeActive ? handleFinish : () => setIsRealtimeActive(true)}
+							style={{
+								background: isRealtimeActive ? '#388e3c' : '#1976d2',
+								color: '#fff',
+								border: 'none',
+								borderRadius: 4,
+								padding: '8px 18px',
+								fontWeight: 'bold',
+								fontSize: 16,
+								cursor: 'pointer',
+								opacity: 1,
+								boxShadow: '0 1px 4px #0001',
+							}}
+						>
+							{isRealtimeActive ? 'Finish' : 'Start'}
+						</button>
+					</div>
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: `repeat(${stages.length}, 1fr)`,
+							gap: 24,
+							background: '#fff',
+							borderRadius: 8,
+							boxShadow: '0 2px 8px #0001',
+							padding: 24,
+							overflowX: 'auto',
+							position: 'relative',
+						}}
+						// onClick={closeAllTagDropdowns}
+					>
 				{stages.map((stage, idx) => {
 					const status = getStageStatus(idx);
 					let stageBg = '#f0f0f0';
@@ -847,7 +841,7 @@ function App() {
 								}}
 							>
 								{`Stage ${idx + 1}: ${stage.label}`}
-								<button
+								{/* <button
 									type="button"
 									onClick={() => handleStageSwitch(idx)}
 									disabled={!canSwitchToStage(idx)}
@@ -867,7 +861,7 @@ function App() {
 									title="Switch to this stage"
 								>
 									Go
-								</button>
+								</button> */}
 							</div>
 							{showOverview[idx] === true && (
 								<div style={{
@@ -1258,7 +1252,9 @@ function App() {
 						</div>
 					);
 				})}
-			</div>
+					</div>
+				</>
+			)}
 		</div>
 	);
 }

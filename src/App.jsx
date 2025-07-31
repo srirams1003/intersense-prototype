@@ -577,24 +577,26 @@ function App() {
 	const realtimePOCRef = useRef(null);
 
 	async function handleTranscribeLast30s() {
-		if (!realtimePOCRef.current || !realtimePOCRef.current.getLast30SecondsAudio) {
+		if (!realtimePOCRef.current || !realtimePOCRef.current.getLast5SecondsAudio) {
 			alert("Audio buffer not available.");
 			return;
 		}
-		const audioBlob = await realtimePOCRef.current.getLast30SecondsAudio();
+		const audioBlob = await realtimePOCRef.current.getLast5SecondsAudio();
 		if (!audioBlob) {
-			alert("No audio available for last 30 seconds.");
+			alert("No audio available for transcription.");
 			return;
 		}
 		console.log('Sending audioBlob:', audioBlob.size, audioBlob.type); // Debug
 		const result = await transcribeAndDiarize(audioBlob);
+		console.log('Transcription result:', result);
 		setTranscriptions(prev => [...prev, result]);
 	}
 
 	// Dummy stub for API call
 	async function transcribeAndDiarize(audioBlob) {
 		const formData = new FormData();
-		formData.append('audio', audioBlob, 'audio.webm');
+		// Use WAV extension since we're creating WAV files
+		formData.append('audio', audioBlob, 'audio.wav');
 		try {
 			const response = await fetch('http://localhost:3001/api/transcribe', {
 				method: 'POST',
@@ -837,7 +839,7 @@ function App() {
 					{/* Show transcriptions */}
 					{transcriptions.length > 0 && (
 						<div style={{ margin: '24px 0', background: '#fffbe6', borderRadius: 8, padding: 16 }}>
-							<div style={{ fontWeight: 'bold', marginBottom: 8 }}>On-Demand Transcriptions</div>
+							<div style={{ fontWeight: 'bold', marginBottom: 8 }}>On-Demand Transcriptions (Last 30s)</div>
 							{transcriptions.map((t, i) => (
 								<div key={i} style={{ marginBottom: 8 }}>
 									<div style={{ fontSize: 13, color: '#888' }}>{t.timestamp}</div>

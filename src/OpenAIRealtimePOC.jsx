@@ -54,17 +54,103 @@ const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
   //     setNewTheme('Error: ' + (err.message || String(err)));
   //   }
   // };
+
+  // Add circular buffer state
+  const circularBufferRef = useRef(null);
+  const bufferIndexRef = useRef(0);
+  const isBufferFullRef = useRef(false);
+  const scriptProcessorRef = useRef(null);
+
   // --- Rolling buffer logic ---
   useImperativeHandle(ref, () => ({
-    getLast30SecondsAudio: async () => {
-      // Remove chunks older than 30s
-      const now = Date.now();
-      audioChunksRef.current = audioChunksRef.current.filter(chunk => now - chunk.timestamp <= 30000);
-      if (audioChunksRef.current.length === 0) return null;
-      const blobs = audioChunksRef.current.map(c => c.blob);
-      return new Blob(blobs, { type: 'audio/webm' });
+    getLast5SecondsAudio: async () => {
+      if (!circularBufferRef.current) {
+        console.log('No circular buffer available');
+        return null;
+      }
+      
+      try {
+        // Create a new audio context for the final buffer
+        const finalContext = new (window.AudioContext || window.webkitAudioContext)();
+        const sampleRate = finalContext.sampleRate;
+        const duration = 30; // 30 seconds
+        const totalSamples = sampleRate * duration;
+        
+        // Create the final audio buffer from the circular buffer
+        const finalBuffer = finalContext.createBuffer(1, totalSamples, sampleRate);
+        const outputData = finalBuffer.getChannelData(0);
+        
+        if (isBufferFullRef.current) {
+          // Buffer is full, copy from current position to end, then from start to current position
+          for (let i = 0; i < totalSamples; i++) {
+            const sourceIndex = (bufferIndexRef.current + i) % totalSamples;
+            outputData[i] = circularBufferRef.current[sourceIndex];
+          }
+        } else {
+          // Buffer not full, copy what we have
+          for (let i = 0; i < bufferIndexRef.current; i++) {
+            outputData[i] = circularBufferRef.current[i];
+          }
+        }
+        
+        // Convert AudioBuffer to WAV
+        const wavBlob = await audioBufferToWav(finalBuffer);
+        console.log('Created WAV blob from last 30 seconds:', wavBlob.size, 'bytes');
+        return wavBlob;
+        
+      } catch (error) {
+        console.error('Error creating WAV from circular buffer:', error);
+        return null;
+      }
     }
   }));
+  
+  // Helper function to convert AudioBuffer to WAV
+  const audioBufferToWav = async (buffer) => {
+    const length = buffer.length;
+    const numberOfChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
+    const view = new DataView(arrayBuffer);
+    
+    console.log('Creating WAV with:', { length, numberOfChannels, sampleRate });
+    
+    // WAV header
+    const writeString = (offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + length * numberOfChannels * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numberOfChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+    view.setUint16(32, numberOfChannels * 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, length * numberOfChannels * 2, true);
+    
+    // Convert audio data
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+    
+    const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+    console.log('WAV blob created:', blob.size, 'bytes');
+    return blob;
+  };
+
 
   // --- Start/Stop logic with MediaRecorder for buffer ---
   const handleStart = async () => {
@@ -86,12 +172,12 @@ const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
           audioChunksRef.current.push({ blob: e.data, timestamp: Date.now() });
-          // Keep only last 30s
+          // Keep only last 10s (more than 5s to ensure we have enough)
           const now = Date.now();
-          audioChunksRef.current = audioChunksRef.current.filter(chunk => now - chunk.timestamp <= 30000);
+          audioChunksRef.current = audioChunksRef.current.filter(chunk => now - chunk.timestamp <= 10000);
         }
       };
-      mediaRecorder.start(1000); // 1s chunks
+      mediaRecorder.start(100); // 100ms chunks for more granular control
 
       // 3. Visualization (unchanged)
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -110,6 +196,32 @@ const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
         rafRef.current = requestAnimationFrame(draw);
       };
       draw();
+      
+      // 4. Set up circular buffer for last 30 seconds
+      const sampleRate = audioContext.sampleRate;
+      const duration = 30; // 30 seconds
+      const totalSamples = sampleRate * duration;
+      circularBufferRef.current = new Float32Array(totalSamples);
+      bufferIndexRef.current = 0;
+      isBufferFullRef.current = false;
+      
+      const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      scriptProcessorRef.current = scriptProcessor;
+      
+      scriptProcessor.onaudioprocess = (event) => {
+        const inputData = event.inputBuffer.getChannelData(0);
+        
+        for (let i = 0; i < inputData.length; i++) {
+          circularBufferRef.current[bufferIndexRef.current] = inputData[i];
+          bufferIndexRef.current = (bufferIndexRef.current + 1) % totalSamples;
+          if (bufferIndexRef.current === 0) {
+            isBufferFullRef.current = true;
+          }
+        }
+      };
+      
+      source.connect(scriptProcessor);
+      scriptProcessor.connect(audioContext.destination);
       // 4. Create RTCPeerConnection
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
@@ -195,6 +307,10 @@ const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
       pcRef.current.close();
       pcRef.current = null;
     }
+    if (scriptProcessorRef.current) {
+      scriptProcessorRef.current.disconnect();
+      scriptProcessorRef.current = null;
+    }
     audioContextRef.current = null;
     analyserRef.current = null;
     dataArrayRef.current = null;
@@ -202,6 +318,9 @@ const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
     streamRef.current = null;
     rafRef.current = null;
     audioChunksRef.current = [];
+    circularBufferRef.current = null;
+    bufferIndexRef.current = 0;
+    isBufferFullRef.current = false;
   };
 
   return (

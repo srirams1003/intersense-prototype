@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import OpenAIRealtimePOC from './OpenAIRealtimePOC';
 
@@ -573,6 +573,36 @@ function App() {
 	// Track detected question from POC
 	const [detectedQuestion, setDetectedQuestion] = useState('');
 	const [isRealtimeActive, setIsRealtimeActive] = useState(false);
+	const [transcriptions, setTranscriptions] = useState([]);
+	const realtimePOCRef = useRef(null);
+
+	async function handleTranscribeLast30s() {
+		if (!realtimePOCRef.current || !realtimePOCRef.current.getLast30SecondsAudio) {
+			alert("Audio buffer not available.");
+			return;
+		}
+		const audioBlob = await realtimePOCRef.current.getLast30SecondsAudio();
+		if (!audioBlob) {
+			alert("No audio available for last 30 seconds.");
+			return;
+		}
+		// Send to backend or API for transcription/diarization
+		const result = await transcribeAndDiarize(audioBlob);
+		setTranscriptions(prev => [...prev, result]);
+	}
+
+	// Dummy stub for API call
+	async function transcribeAndDiarize(audioBlob) {
+		// TODO: Replace with actual API call
+		return {
+			timestamp: new Date().toISOString(),
+			transcript: "Speaker 1: Hello\nSpeaker 2: Hi there!",
+			speakers: [
+				{ name: "Speaker 1", text: "Hello" },
+				{ name: "Speaker 2", text: "Hi there!" }
+			]
+		};
+	}
 
 	// When detectedQuestion changes, find which stage and question it matches
 	React.useEffect(() => {
@@ -742,10 +772,11 @@ function App() {
 					{isRealtimeActive && (
 						<div style={{ marginBottom: 32 }}>
 							<OpenAIRealtimePOC
+								ref={realtimePOCRef}
 								key="realtime-poc"
 								script={scriptForAPI}
 								onDetectedQuestion={setDetectedQuestion}
-								autoStart={isRealtimeActive} // <-- fix: pass the correct prop
+								autoStart={isRealtimeActive}
 							/>
 						</div>
 					)}
@@ -768,7 +799,38 @@ function App() {
 						>
 							{isRealtimeActive ? 'Finish' : 'Start'}
 						</button>
+						<button
+							type="button"
+							onClick={handleTranscribeLast30s}
+							style={{
+								background: '#ff9800',
+								color: '#fff',
+								border: 'none',
+								borderRadius: 4,
+								padding: '8px 18px',
+								fontWeight: 'bold',
+								fontSize: 16,
+								cursor: isRealtimeActive ? 'pointer' : 'not-allowed',
+								opacity: isRealtimeActive ? 1 : 0.5,
+								boxShadow: '0 1px 4px #0001',
+							}}
+							disabled={!isRealtimeActive}
+						>
+							Transcribe Last 30s
+						</button>
 					</div>
+					{/* Show transcriptions */}
+					{transcriptions.length > 0 && (
+						<div style={{ margin: '24px 0', background: '#fffbe6', borderRadius: 8, padding: 16 }}>
+							<div style={{ fontWeight: 'bold', marginBottom: 8 }}>On-Demand Transcriptions</div>
+							{transcriptions.map((t, i) => (
+								<div key={i} style={{ marginBottom: 8 }}>
+									<div style={{ fontSize: 13, color: '#888' }}>{t.timestamp}</div>
+									<pre style={{ margin: 0, fontSize: 14 }}>{t.transcript}</pre>
+								</div>
+							))}
+						</div>
+					)}
 					<div
 						style={{
 							display: 'grid',

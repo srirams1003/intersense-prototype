@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 
 const MODEL_ID = "gpt-4o-realtime-preview-2025-06-03";
 const baseUrl = "https://api.openai.com/v1/realtime";
 const BACKEND_URL = "http://localhost:3001"; // Change if backend runs elsewhere
 
-function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
+const OpenAIRealtimePOC = forwardRef(function OpenAIRealtimePOC(props, ref) {
+  const { script, onDetectedQuestion, autoStart } = props;
   const [questionsText, setQuestionsText] = useState('');
   const [detectedQuestion, setDetectedQuestion] = useState('');
   const [error, setError] = useState('');
@@ -18,6 +19,8 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
   const dcRef = useRef(null);
   const [isActive, setIsActive] = useState(false);
   const [newTheme, setNewTheme] = useState('');
+  const audioChunksRef = useRef([]);
+  const mediaRecorderRef = useRef(null);
   // Use prop 'script' if provided, else use local textarea
   const effectiveScript = script !== undefined ? script : questionsText;
 
@@ -51,18 +54,45 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
   //     setNewTheme('Error: ' + (err.message || String(err)));
   //   }
   // };
+  // --- Rolling buffer logic ---
+  useImperativeHandle(ref, () => ({
+    getLast30SecondsAudio: async () => {
+      // Remove chunks older than 30s
+      const now = Date.now();
+      audioChunksRef.current = audioChunksRef.current.filter(chunk => now - chunk.timestamp <= 30000);
+      if (audioChunksRef.current.length === 0) return null;
+      const blobs = audioChunksRef.current.map(c => c.blob);
+      return new Blob(blobs, { type: 'audio/webm' });
+    }
+  }));
+
+  // --- Start/Stop logic with MediaRecorder for buffer ---
   const handleStart = async () => {
     setError('');
-    if (!effectiveScript.trim()) {
+    if (!props.script?.trim()) {
       setError('No script/questions provided.');
       return;
     }
     setDetectedQuestion('');
     setIsActive(true);
     try {
-      // 2. Get mic stream
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      // --- MediaRecorder for rolling buffer ---
+      const mediaRecorder = new window.MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push({ blob: e.data, timestamp: Date.now() });
+          // Keep only last 30s
+          const now = Date.now();
+          audioChunksRef.current = audioChunksRef.current.filter(chunk => now - chunk.timestamp <= 30000);
+        }
+      };
+      mediaRecorder.start(1000); // 1s chunks
+
       // 3. Visualization (unchanged)
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       audioContextRef.current = audioContext;
@@ -157,6 +187,10 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -167,6 +201,7 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
     sourceRef.current = null;
     streamRef.current = null;
     rafRef.current = null;
+    audioChunksRef.current = [];
   };
 
   return (
@@ -189,6 +224,6 @@ function OpenAIRealtimePOC({ script, onDetectedQuestion, autoStart }) {
       )}
     </div>
   );
-}
+});
 
-export default OpenAIRealtimePOC; 
+export default OpenAIRealtimePOC;

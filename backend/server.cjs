@@ -75,6 +75,7 @@ ${context}
 // POST /api/transcribe (audio upload, returns transcript + diarization)
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
+    console.log('Uploading audio to AssemblyAI...');
     // 1. Upload audio to AssemblyAI
     const uploadRes = await axios.post(
       'https://api.assemblyai.com/v2/upload',
@@ -87,7 +88,9 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       }
     );
     const audio_url = uploadRes.data.upload_url;
+    console.log('Upload URL:', uploadRes.data.upload_url);
 
+    console.log('Requesting transcription...');
     // 2. Request transcription with diarization
     const transcriptRes = await axios.post(
       'https://api.assemblyai.com/v2/transcript',
@@ -104,21 +107,35 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       }
     );
     const transcriptId = transcriptRes.data.id;
+    console.log('Transcript ID:', transcriptRes.data.id);
+
+    // Wait 2 seconds before polling
+    await new Promise(r => setTimeout(r, 3000));
 
     // 3. Poll for completion
     let transcript;
     for (let i = 0; i < 60; i++) { // up to ~60s
       await new Promise(r => setTimeout(r, 2000));
-      const pollRes = await axios.get(
-        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
-        { headers: { 'authorization': ASSEMBLYAI_API_KEY } }
-      );
-      if (pollRes.data.status === 'completed') {
-        transcript = pollRes.data;
-        break;
-      }
-      if (pollRes.data.status === 'failed') {
-        return res.status(500).json({ error: 'Transcription failed.' });
+      try {
+        const pollRes = await axios.get(
+          `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+          { headers: { 'authorization': ASSEMBLYAI_API_KEY } }
+        );
+        if (pollRes.data.status === 'completed') {
+          transcript = pollRes.data;
+          break;
+        }
+        if (pollRes.data.status === 'failed') {
+          return res.status(500).json({ error: 'Transcription failed.' });
+        }
+      } catch (err) {
+        // If 502, wait and retry
+        if (err.response && err.response.status === 502) {
+          console.warn('502 from AssemblyAI, retrying...');
+          continue;
+        }
+        // For other errors, throw
+        throw err;
       }
     }
     if (!transcript) return res.status(500).json({ error: 'Timed out.' });

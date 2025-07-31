@@ -75,6 +75,8 @@ ${context}
 // POST /api/transcribe (audio upload, returns transcript + diarization)
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
+    console.log('Received audio size:', req.file.size, 'type:', req.file.mimetype);
+
     console.log('Uploading audio to AssemblyAI...');
     // 1. Upload audio to AssemblyAI
     const uploadRes = await axios.post(
@@ -121,6 +123,8 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
           `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
           { headers: { 'authorization': ASSEMBLYAI_API_KEY } }
         );
+        // Debug: print pollRes.data every time
+        console.log('AssemblyAI poll:', JSON.stringify(pollRes.data, null, 2));
         if (pollRes.data.status === 'completed') {
           transcript = pollRes.data;
           break;

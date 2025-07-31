@@ -586,7 +586,7 @@ function App() {
 			alert("No audio available for last 30 seconds.");
 			return;
 		}
-		// Send to backend or API for transcription/diarization
+		console.log('Sending audioBlob:', audioBlob.size, audioBlob.type); // Debug
 		const result = await transcribeAndDiarize(audioBlob);
 		setTranscriptions(prev => [...prev, result]);
 	}

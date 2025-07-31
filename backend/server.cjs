@@ -1,10 +1,15 @@
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+const upload = multer();
+
+const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
 
 // POST /session { context: string }
 app.post('/session', async (req, res) => {
@@ -67,7 +72,85 @@ ${context}
   }
 });
 
+// POST /api/transcribe (audio upload, returns transcript + diarization)
+app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    // 1. Upload audio to AssemblyAI
+    const uploadRes = await axios.post(
+      'https://api.assemblyai.com/v2/upload',
+      req.file.buffer,
+      {
+        headers: {
+          'authorization': ASSEMBLYAI_API_KEY,
+          'transfer-encoding': 'chunked',
+        },
+      }
+    );
+    const audio_url = uploadRes.data.upload_url;
+
+    // 2. Request transcription with diarization
+    const transcriptRes = await axios.post(
+      'https://api.assemblyai.com/v2/transcript',
+      {
+        audio_url,
+        speaker_labels: true,
+        // Optionally: language_code: 'en_us'
+      },
+      {
+        headers: {
+          'authorization': ASSEMBLYAI_API_KEY,
+          'content-type': 'application/json',
+        },
+      }
+    );
+    const transcriptId = transcriptRes.data.id;
+
+    // 3. Poll for completion
+    let transcript;
+    for (let i = 0; i < 60; i++) { // up to ~60s
+      await new Promise(r => setTimeout(r, 2000));
+      const pollRes = await axios.get(
+        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+        { headers: { 'authorization': ASSEMBLYAI_API_KEY } }
+      );
+      if (pollRes.data.status === 'completed') {
+        transcript = pollRes.data;
+        break;
+      }
+      if (pollRes.data.status === 'failed') {
+        return res.status(500).json({ error: 'Transcription failed.' });
+      }
+    }
+    if (!transcript) return res.status(500).json({ error: 'Timed out.' });
+
+    // 4. Format diarized transcript
+    let diarized = '';
+    if (transcript.words) {
+      let lastSpeaker = null;
+      transcript.words.forEach(wordObj => {
+        if (wordObj.speaker !== lastSpeaker) {
+          diarized += (diarized ? '\n' : '') + `Speaker ${wordObj.speaker}: `;
+          lastSpeaker = wordObj.speaker;
+        }
+        diarized += wordObj.text + ' ';
+      });
+    }
+
+    res.json({
+      transcript: diarized.trim(),
+      speakers: transcript.words ? transcript.words.map(w => ({
+        speaker: w.speaker,
+        text: w.text
+      })) : [],
+      raw: transcript, // for debugging
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Backend listening on port ${PORT}`);
-}); 
+});

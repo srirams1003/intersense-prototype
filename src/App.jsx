@@ -593,15 +593,30 @@ function App() {
 
 	// Dummy stub for API call
 	async function transcribeAndDiarize(audioBlob) {
-		// TODO: Replace with actual API call
-		return {
-			timestamp: new Date().toISOString(),
-			transcript: "Speaker 1: Hello\nSpeaker 2: Hi there!",
-			speakers: [
-				{ name: "Speaker 1", text: "Hello" },
-				{ name: "Speaker 2", text: "Hi there!" }
-			]
-		};
+		const formData = new FormData();
+		formData.append('audio', audioBlob, 'audio.webm');
+		try {
+			const response = await fetch('http://localhost:3001/api/transcribe', {
+				method: 'POST',
+				body: formData,
+			});
+			if (!response.ok) {
+				throw new Error('Transcription failed');
+			}
+			const data = await response.json();
+			return {
+				timestamp: new Date().toISOString(),
+				transcript: data.transcript,
+				speakers: data.speakers || [],
+				raw: data.raw, // for debugging
+			};
+		} catch (err) {
+			return {
+				timestamp: new Date().toISOString(),
+				transcript: '[Transcription failed: ' + err.message + ']',
+				speakers: [],
+			};
+		}
 	}
 
 	// When detectedQuestion changes, find which stage and question it matches

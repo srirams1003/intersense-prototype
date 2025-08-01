@@ -232,18 +232,6 @@ function App() {
 		});
 	}
 
-	function handleCurrentOverview() {
-		if (current.stageIdx === null) return;
-		setSummaries((prev) => ({
-			...prev,
-			[current.stageIdx]: getRandomSummary()
-		}));
-		setShowOverview((prev) => ({
-			...prev,
-			[current.stageIdx]: true
-		}));
-	}
-
 	React.useEffect(() => {
 		if (current.stageIdx !== null && current.stageIdx > 0) {
 			const prevIdx = current.stageIdx - 1;
@@ -251,10 +239,6 @@ function App() {
 				setSummaries((prev) => ({
 					...prev,
 					[prevIdx]: getRandomSummary()
-				}));
-				setShowOverview((prev) => ({
-					...prev,
-					[prevIdx]: true
 				}));
 			}
 		}
@@ -1011,8 +995,8 @@ function App() {
 								let bg = '';
 								let color = '#222';
 								if (isDetected || isVisitedQ) {
-									bg = 'lightgray';
-									color = '#888';
+									bg = '#fffbe6';  // 浅黄色背景
+									color = '#222';  // 保持文字颜色不变
 								} else if (stage.questions[rowIdx]) {
 									bg = '#f5faff';
 									color = '#222';

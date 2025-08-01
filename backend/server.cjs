@@ -77,8 +77,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
     console.log('Received audio size:', req.file.size, 'type:', req.file.mimetype);
 
-    console.log('Uploading audio to AssemblyAI...');
-    // 1. Upload audio to AssemblyAI
     const uploadRes = await axios.post(
       'https://api.assemblyai.com/v2/upload',
       req.file.buffer,
@@ -92,8 +90,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     const audio_url = uploadRes.data.upload_url;
     console.log('Upload URL:', uploadRes.data.upload_url);
 
-    console.log('Requesting transcription...');
-    // 2. Request transcription with diarization
     const transcriptRes = await axios.post(
       'https://api.assemblyai.com/v2/transcript',
       {
@@ -142,9 +138,13 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         throw err;
       }
     }
-    if (!transcript) return res.status(500).json({ error: 'Timed out.' });
+    if (!transcript) {
+
+      return res.status(500).json({ error: 'Timed out.' });
+    }
 
     // 4. Format diarized transcript
+
     let diarized = '';
     if (transcript.words) {
       let lastSpeaker = null;
@@ -157,6 +157,7 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       });
     }
 
+
     res.json({
       transcript: diarized.trim(),
       speakers: transcript.words ? transcript.words.map(w => ({
@@ -166,7 +167,6 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
       raw: transcript, // for debugging
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });

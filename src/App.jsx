@@ -994,8 +994,11 @@ function App() {
 								// Only highlight if detected by model or visited
 								let bg = '';
 								let color = '#222';
-								if (isDetected || isVisitedQ) {
+								if (isDetected){
 									bg = '#fffbe6';  // 浅黄色背景
+									color = '#222';  // 保持文字颜色不变
+								} else if (isVisitedQ) {
+									bg = '#e0e0e0';  // 浅黄色背景
 									color = '#222';  // 保持文字颜色不变
 								} else if (stage.questions[rowIdx]) {
 									bg = '#f5faff';

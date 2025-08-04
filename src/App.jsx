@@ -856,7 +856,7 @@ function App() {
 					let boxShadow = '0 1px 4px #0001';
 					if (status === 'past') {
 						stageBg = '#e0e0e0';
-						stageColor = '#888';
+						stageColor = '#888'; 
 						borderColor = '#d0d0d0';
 						borderWidth = 2;
 					} else if (status === 'current') {
@@ -998,7 +998,7 @@ function App() {
 									bg = '#fffbe6';  // 浅黄色背景
 									color = '#222';  // 保持文字颜色不变
 								} else if (isVisitedQ) {
-									bg = '#e0e0e0';  // 浅黄色背景
+									bg = '#e0e0e0';  // 浅灰色背景
 									color = '#222';  // 保持文字颜色不变
 								} else if (stage.questions[rowIdx]) {
 									bg = '#f5faff';
@@ -1017,7 +1017,7 @@ function App() {
 											border: stage.questions[rowIdx] ? '1px solid #b6d4fa' : 'none',
 											transition: 'background 0.2s, color 0.2s',
 											opacity: stage.questions[rowIdx] ? 1 : 0,
-											boxShadow: isCurrent ? '0 0 0 2px #ffeb3b' : undefined,
+											boxShadow: undefined, // 移除 isCurrent ? '0 0 0 2px #ffeb3b' : undefined
 											display: 'flex',
 											flexDirection: 'column',
 											position: 'relative',

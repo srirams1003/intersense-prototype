@@ -15,7 +15,7 @@ const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
 app.post('/session', async (req, res) => {
   const { context } = req.body;
   try {
-    const instructions = `You are an interview assistant. Here is the script of questions:\n${context}\nAs the user speaks, listen to their speech and for each utterance, reply ONLY with the text of the question from the script that best matches the user's current topic. Do NOT repeat what the user said. Do NOT reply in voice. If no question matches, reply with 'No matching question.' Only output the question text, nothing else.`;
+    const instructions = `You are an interview assistant. Here is the script of questions:\n${context}\nAs the user speaks, listen to their speech and for each utterance, reply ONLY with the text of the question from the script that best matches the user's current topic. If no question matches, reply with 'No matching question.' Only output the question text, nothing else.`;
     const r = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {

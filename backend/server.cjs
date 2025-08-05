@@ -3,6 +3,7 @@ const cors = require('cors');
 const multer = require('multer');
 const axios = require('axios');
 require('dotenv').config();
+const { AssemblyAI } = require("assemblyai");
 
 const app = express();
 app.use(cors());
@@ -164,9 +165,40 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
         speaker: w.speaker,
         text: w.text
       })) : [],
+      transcriptId: transcriptId, // Add transcript ID for LeMUR
       raw: transcript, // for debugging
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/lemur-summary (LeMUR extractive summary)
+app.post('/api/lemur-summary', async (req, res) => {
+  try {
+    const { transcriptId } = req.body;
+    if (!transcriptId) {
+      return res.status(400).json({ error: 'Transcript ID is required' });
+    }
+
+    const client = new AssemblyAI({
+      apiKey: process.env.ASSEMBLYAI_API_KEY,
+    });
+
+    // Use the generic task endpoint for a custom prompt
+    const { response } = await client.lemur.task({
+      transcript_ids: [transcriptId],
+      prompt: "this is the transcript of an interview, please infer who is the interviewer and who is the interviewee, and then do a extractive summary of what the interviewee said.",
+      answer_format: "text",
+      final_model: "anthropic/claude-3-haiku"
+    });
+
+    res.json({
+      summary: response,
+      transcriptId
+    });
+  } catch (err) {
+    console.error('LeMUR error:', err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 });

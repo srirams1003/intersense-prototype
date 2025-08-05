@@ -590,10 +590,32 @@ function App() {
 				throw new Error('Transcription failed');
 			}
 			const data = await response.json();
+			
+			// Call LeMUR for summary if we have a transcript ID
+			let summary = null;
+			if (data.transcriptId) {
+				try {
+					const summaryResponse = await fetch('http://localhost:3001/api/lemur-summary', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify({ transcriptId: data.transcriptId }),
+					});
+					if (summaryResponse.ok) {
+						const summaryData = await summaryResponse.json();
+						summary = summaryData.summary;
+					}
+				} catch (summaryErr) {
+					console.error('LeMUR summary failed:', summaryErr);
+				}
+			}
+			
 			return {
 				timestamp: new Date().toISOString(),
 				transcript: data.transcript,
 				speakers: data.speakers || [],
+				summary: summary,
 				raw: data.raw, // for debugging
 			};
 		} catch (err) {
@@ -601,6 +623,7 @@ function App() {
 				timestamp: new Date().toISOString(),
 				transcript: '[Transcription failed: ' + err.message + ']',
 				speakers: [],
+				summary: null,
 			};
 		}
 	}
@@ -825,9 +848,25 @@ function App() {
 						<div style={{ margin: '24px 0', background: '#fffbe6', borderRadius: 8, padding: 16 }}>
 							<div style={{ fontWeight: 'bold', marginBottom: 8 }}>On-Demand Transcriptions (Last 30s)</div>
 							{transcriptions.map((t, i) => (
-								<div key={i} style={{ marginBottom: 8 }}>
+								<div key={i} style={{ marginBottom: 16 }}>
 									<div style={{ fontSize: 13, color: '#888' }}>{t.timestamp}</div>
-									<pre style={{ margin: 0, fontSize: 14 }}>{t.transcript}</pre>
+									<pre style={{ margin: 0, fontSize: 14, marginBottom: 8 }}>{t.transcript}</pre>
+									{t.summary && (
+										<div style={{ 
+											marginTop: 8, 
+											padding: 12, 
+											background: '#e3f2fd', 
+											borderRadius: 6, 
+											borderLeft: '4px solid #1976d2' 
+										}}>
+											<div style={{ fontWeight: 'bold', marginBottom: 4, color: '#1976d2' }}>
+												Extractive Summary:
+											</div>
+											<div style={{ fontSize: 14, lineHeight: 1.4 }}>
+												{t.summary}
+											</div>
+										</div>
+									)}
 								</div>
 							))}
 						</div>
